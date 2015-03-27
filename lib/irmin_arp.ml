@@ -1,5 +1,3 @@
-open Lwt
-
 (* need types for arp entries *)
 type ip = Ipaddr.V4.t
 type result = [ `Ok of Macaddr.t | `Timeout ]
@@ -31,7 +29,36 @@ type entry =
 (* just getting the right stubs so this thing compiles is quite the adventure *)
 
 
-module Table = struct
+module Table : Irmin.Contents.S = struct
+  module Path = Irmin.Path.String_list
+  module M = Map.Make(Ipaddr.V4)
+
+  module Ops = struct
+    (* huh, this signature makes it clear why we need Path.t to be >1 thing, since
+       we get only one argument to merge; presumably the semantics here are "merge
+       together all the things in `path`" *)
+
+    type t = Ipaddr.V4.t (* map from ip -> entry *)
+
+    (* read the entire map from a cstruct *)
+    let read buf = Ipaddr.V4.unspecified
+
+    let write b buf = Cstruct.create 0
+
+    let size_of p = 0
+
+    let of_json (t : Ezjsonm.value) = Ipaddr.V4.unspecified
+
+    let to_json p = Ezjsonm.unit ()
+
+    let hash p = 0
+
+    let compare p q = 0
+
+    let equal p q = true
+  end
+
+  include Ops
 
   (* what are the available Paths?  What do I mean when I'm setting one? *)
   (* stores bind paths to contents, so basically this is a way of denoting what
@@ -50,66 +77,9 @@ module Table = struct
      system, presumably? *)
   (* A lot of operations in the examples actually ignore the path, which is
      provided as an argument to the merge function; interesting. *)
-  module Path : Irmin.Path.S = struct
-    type t = Ipaddr.V4.t
-    type step = Ipaddr.V4.t (* given a list of IPs, just take the last one *)
+  module Merge_map = Irmin.Merge.Map(M)(Ops)
 
-    let equal p q = match Ipaddr.V4.compare p q with
-      | 0 -> true
-      | _ -> false
-
-    let empty = Ipaddr.V4.unspecified
-    let is_empty = equal Ipaddr.V4.unspecified
-
-(* these are actually probably wrong in this context; it should be the contents
-   of this thing in a key/value store, which raises the chicken-and-egg question
-   of how exactly I expect to deal with that in this context *)
-    let read t = t
-    let write t = t
-    let size_of t = t
-    let of_json t = empty 
-    let to_json t = Ezjsonm.unit ()
-    let compare = Ipaddr.V4.compare
-
-    let create steps = List.hd (List.rev steps)
-
-    let cons addr t = addr
-    let rcons = cons 
-    let decons addr = match is_empty addr with
-      | true -> None
-      | false -> Some (addr, Ipaddr.V4.unspecified)
-    let rdecons = decons
-    let map t f = [f t]
-    let to_hum = Ipaddr.V4.to_string
-    let of_hum = Ipaddr.V4.of_string_exn
-
-    module Step = struct
-      type t = step
-      let to_hum = Ipaddr.V4.to_string
-      let of_hum = Ipaddr.V4.of_string_exn
-    end
-
-  end
-
-  type t = unit (* map from ip -> entry *)
- 
-  let merge a b = a (* Map.merge, with precedence rules *)
-
-  let read a = a
-
-  let write b = b
-
-  let size_of p = 0
-
-  let of_json str = ()
-
-  let to_json p = ""
-
-  let hash p = 0
-
-  let compare p q = 0
-
-  let equal p q = true
+  let merge _path = Merge_map.merge
 
 end
 
