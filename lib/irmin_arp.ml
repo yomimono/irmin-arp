@@ -20,6 +20,8 @@ end
 
 module Table(M: Map.S)(P: Irmin.Path.S) : sig
   include Irmin.Contents.S 
+  val to_map : t -> Entry.t M.t
+  val of_map : Entry.t M.t -> t
 end = struct
   module Path = P
 
@@ -41,6 +43,7 @@ end = struct
   include Ops
 
   let to_map t = t
+  let of_map = to_map
 
   let merge _path = Irmin.Merge.default (module Tc.Option(Ops))
 

@@ -35,9 +35,10 @@ let main () =
   (* try to store something; make sure we get it back out *)
   let node = T.Path.empty in
   (* update, etc operations need a Table.t ; we know how to make Ipv4_map.t's *)
-  Irmin.update (t "initial map") node (old ()) >>= fun () ->
+  let wrapped_old = T.of_map (old ()) in
+  Irmin.update (t "initial map") node wrapped_old >>= fun () ->
   Irmin.read_exn (t "readback of initial map") node >>= fun map ->
-  OUnit.assert_equal map (old ());
+  OUnit.assert_equal map wrapped_old;
   return_unit
 
 let () =
