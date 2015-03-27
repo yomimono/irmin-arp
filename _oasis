@@ -18,4 +18,4 @@ Executable test_irmin_arp
   MainIs:         test_irmin_arp.ml
   CompiledObject: best
   Install:        false
-  BuildDepends:   irmin, irmin_arp, lwt, irmin.unix, ipaddr
+  BuildDepends:   irmin, irmin_arp, lwt, irmin.unix, ipaddr, oUnit
