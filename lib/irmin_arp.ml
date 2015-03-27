@@ -38,16 +38,16 @@ module Table : Irmin.Contents.S = struct
        we get only one argument to merge; presumably the semantics here are "merge
        together all the things in `path`" *)
 
-    type t = Ipaddr.V4.t (* map from ip -> entry *)
+    type t = entry M.t (* map from ip -> entry *)
 
     (* read the entire map from a cstruct *)
-    let read buf = Ipaddr.V4.unspecified
+    let read buf = M.empty
 
     let write b buf = Cstruct.create 0
 
     let size_of p = 0
 
-    let of_json (t : Ezjsonm.value) = Ipaddr.V4.unspecified
+    let of_json (t : Ezjsonm.value) = M.empty
 
     let to_json p = Ezjsonm.unit ()
 
