@@ -77,9 +77,8 @@ module Table : Irmin.Contents.S = struct
      system, presumably? *)
   (* A lot of operations in the examples actually ignore the path, which is
      provided as an argument to the merge function; interesting. *)
-  module Merge_map = Irmin.Merge.Map(M)(Ops)
 
-  let merge _path = Merge_map.merge
+  let merge _path = Irmin.Merge.default (module Tc.Option(Ops))
 
 end
 
