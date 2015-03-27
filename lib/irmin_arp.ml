@@ -4,6 +4,15 @@ module Entry = struct
     | Pending of result Lwt.t * result Lwt.u
     | Confirmed of float * Macaddr.t
 
+  let to_string = function
+    | Confirmed (time, mac) -> Printf.sprintf "%s expiring at %f"
+                               (Macaddr.to_bytes mac) time
+    | Pending _ -> "Waiting to resolve..."
+
+  let is_pending = function
+    | Confirmed _ -> false
+    | Pending _ -> true
+
   (* confirmed trumps pending
      absent trumps nonpending (with additional timing logic?)
      pending trumps absent *)
