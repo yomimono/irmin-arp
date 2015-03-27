@@ -1,10 +1,3 @@
-(* need types for arp entries *)
-type ip = Ipaddr.V4.t
-type result = [ `Ok of Macaddr.t | `Timeout ]
-type entry = 
-  | Pending of result Lwt.t * result Lwt.u
-  | Confirmed of float * Macaddr.t
-
 (* need documentation for what these types are actually supposed to mean/do --
    maybe it's somewhere in irmin.mli or in the wiki tutorials?  
    The example in `custom_merge.ml` is using some predefined stuff which is
@@ -28,6 +21,27 @@ type entry =
 
 (* just getting the right stubs so this thing compiles is quite the adventure *)
 
+module Entry = struct
+  type result = [ `Ok of Macaddr.t | `Timeout ]
+  type entry = 
+    | Pending of result Lwt.t * result Lwt.u
+    | Confirmed of float * Macaddr.t
+
+  (* confirmed trumps pending
+     absent trumps nonpending (with additional timing logic?)
+     pending trumps absent *)
+  let compare p q =
+    match (p, q) with
+    | Pending _, Pending _ -> -1 (* arbitrarily; doesn't really matter *)
+    | Pending _, Confirmed _ -> -1
+    | Confirmed (p_time, _), Confirmed (q_time, _) -> compare p_time q_time
+    | Confirmed _, Pending _ -> 1 
+
+  let make_pending () = let t, u = Lwt.task () in Pending (t, u)
+
+  let make_confirmed f m = Confirmed (f, m)
+
+end
 
 module Table : Irmin.Contents.S = struct
   module Path = Irmin.Path.String_list
@@ -38,7 +52,7 @@ module Table : Irmin.Contents.S = struct
        we get only one argument to merge; presumably the semantics here are "merge
        together all the things in `path`" *)
 
-    type t = entry M.t (* map from ip -> entry *)
+    type t = Entry.entry M.t (* map from ip -> entry *)
 
     (* read the entire map from a cstruct *)
     let read buf = M.empty
@@ -53,7 +67,7 @@ module Table : Irmin.Contents.S = struct
 
     let hash p = 0
 
-    let compare p q = 0
+    let compare p q = M.compare (Entry.compare) p q
 
     let equal p q = true
   end
