@@ -1,3 +1,5 @@
+open Lwt
+
 (* make an in-memory new bare irmin thing *)
 (* make a simple tree in it [old] *)
 (* clone [old]; modify it to get [new1] *)
@@ -6,8 +8,8 @@
 
 let main () =
   let store = Irmin.basic (module Irmin_mem.Make) (module Irmin_arp.Table) in
-  let config = Irmin_mem.config ~bare:true () in
-  Irmin.create store config task >>= fun t ->
+  let config = Irmin_mem.config () in
+  Irmin.create store config Irmin_unix.task >>= fun t ->
   return_unit
 
 let () =
