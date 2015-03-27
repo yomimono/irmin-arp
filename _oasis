@@ -1,0 +1,21 @@
+OASISFormat: 0.4
+Name:        irmin_arp
+Version:     0.0.1
+Synopsis:    you know what arp caches need?  dvcs.
+Authors:     Mindy Preston
+License:     ISC
+Plugins:     META (0.4), DevFiles (0.4)
+BuildTools:  ocamlbuild
+
+Library irmin_arp
+  Path:            lib/
+  Findlibname:     irmin_arp
+  Modules:         Irmin_arp
+  BuildDepends:    irmin, lwt, ipaddr, ezjsonm
+
+Executable test_irmin_arp
+  Path:           lib_test
+  MainIs:         test_irmin_arp.ml
+  CompiledObject: best
+  Install:        false
+  BuildDepends:   irmin, irmin_arp, lwt, irmin.unix, ipaddr
