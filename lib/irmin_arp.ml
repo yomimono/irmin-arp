@@ -18,7 +18,11 @@ module Entry = struct
   let make_confirmed f m = Confirmed (f, m)
 end
 
-module Table : Irmin.Contents.S = struct
+module Table(M: Map.S) : sig
+  include Irmin.Contents.S 
+  val of_map : (Ipaddr.V4.t M.t) -> t
+  val to_map : t -> (Ipaddr.V4.t M.t)
+end = struct
   module Path = Irmin.Path.String_list
   module M = Map.Make(Ipaddr.V4)
 
@@ -26,7 +30,6 @@ module Table : Irmin.Contents.S = struct
 
     type t = Entry.entry M.t (* map from ip -> entry *)
 
-    (* read the entire map from a cstruct *)
     let read buf = M.empty
     let write b buf = Cstruct.create 0
     let size_of p = 0
@@ -38,6 +41,7 @@ module Table : Irmin.Contents.S = struct
   end
 
   include Ops
+
   let merge _path = Irmin.Merge.default (module Tc.Option(Ops))
 
 end
