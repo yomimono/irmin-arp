@@ -1,6 +1,6 @@
 module Entry = struct
   type result = [ `Ok of Macaddr.t | `Timeout ]
-  type entry = 
+  type t = 
     | Pending of result Lwt.t * result Lwt.u
     | Confirmed of float * Macaddr.t
 
@@ -18,29 +18,29 @@ module Entry = struct
   let make_confirmed f m = Confirmed (f, m)
 end
 
-module Table(M: Map.S) : sig
+module Table(M: Map.S)(P: Irmin.Path.S) : sig
   include Irmin.Contents.S 
-  val of_map : (Ipaddr.V4.t M.t) -> t
-  val to_map : t -> (Ipaddr.V4.t M.t)
 end = struct
-  module Path = Irmin.Path.String_list
-  module M = Map.Make(Ipaddr.V4)
+  module Path = P
 
-  module Ops = struct
-
-    type t = Entry.entry M.t (* map from ip -> entry *)
+  module Ops : sig 
+    include Tc.S0 with type t = Entry.t M.t (* map from ip -> entry *)
+  end = struct
+    type t = Entry.t M.t (* map from ip -> entry *)
 
     let read buf = M.empty
     let write b buf = Cstruct.create 0
-    let size_of p = 0
-    let of_json (t : Ezjsonm.value) = M.empty
-    let to_json p = Ezjsonm.unit ()
+    let size_of _ = 0
+    let of_json _ = M.empty
+    let to_json _ = Ezjsonm.unit ()
     let hash p = 0
-    let compare p q = M.compare (Entry.compare) p q
+    let compare = M.compare (Entry.compare)
     let equal p q = true
   end
 
   include Ops
+
+  let to_map t = t
 
   let merge _path = Irmin.Merge.default (module Tc.Option(Ops))
 
