@@ -133,12 +133,9 @@ let merge_conflicts_solved _ctx =
   (* both branches (expired_removed, pending_resolved) should now be written
      into Irmin store *)
   (* try merging first one, then the other, into master (t) *)
-  Irmin.merge_exn "Merging pending_resolved into master" pend_branch ~into:t >>= 
-  fun () ->
-  Irmin.merge_exn "Merging expired_removed into master" exp_branch ~into:t >>= 
-  fun () ->
-  (* the tree should have ip3 resolved, ip1 gone, ip2 unchanged, nothing
-         else *)
+  Irmin.merge_exn "pending_resolved -> master" pend_branch ~into:t >>= fun () ->
+  Irmin.merge_exn "expired_removed -> master" exp_branch ~into:t >>= fun () ->
+  (* the tree should have ip3 resolved, ip1 gone, ip2 unchanged, nothing else *)
   Irmin.read_exn (t "final readback") node >>= fun map ->
   let map = T.to_map map in
   assert_absent map ip1;
