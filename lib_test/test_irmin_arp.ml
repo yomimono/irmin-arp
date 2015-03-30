@@ -43,7 +43,6 @@ let old () =
 (* clone [old]; modify it to get [new2] *)
 (* merge [new1, new2] on [old] *)
 
-
 let readback_works _ctx =
   make_in_memory () >>= fun t ->
   (* try to store something; make sure we get it back out *)
@@ -88,6 +87,11 @@ let updates_work _cts =
     Irmin.read_exn (t "get updated map after merge") node >>= fun new_m_from_t
     ->
     let new_m_from_t = T.to_map new_m_from_t in
+    (* check contents *)
+    assert_resolves new_m_from_t ip2 (confirm time2 mac2);
+    assert_pending new_m_from_t ip3;
+    assert_absent new_m_from_t ip1;
+    (* overall equality test *)
     OUnit.assert_equal new_m_from_t m;
     return_unit
 
