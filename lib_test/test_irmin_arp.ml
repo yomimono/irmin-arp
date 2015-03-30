@@ -37,6 +37,11 @@ let old () =
   let m = Ipv4_map.add ip3 (Entry.make_pending ()) m in
   m
 
+let update_and_readback map t ~update_msg ~readback_msg node =
+  Irmin.update (t update_msg) node (T.of_map map) >>= fun () ->
+  Irmin.read_exn (t readback_msg) node >>= fun map ->
+  Lwt.return (T.to_map map)
+
 (* make an in-memory new bare irmin thing *)
 (* make a simple tree in it [old] *)
 (* clone [old]; modify it to get [new1] *)
@@ -48,13 +53,10 @@ let readback_works _ctx =
   (* try to store something; make sure we get it back out *)
   let node = T.Path.empty in
   (* update, etc operations need a Table.t ; we know how to make Ipv4_map.t's *)
-  let wrapped_old = T.of_map (old ()) in
-  Irmin.update (t "initial map") node wrapped_old >>= fun () ->
-  Irmin.read_exn (t "readback of initial map") node >>= fun map ->
-  (* returned object at least looks like what we put in *)
-  OUnit.assert_equal map wrapped_old;
-  (* and it has the right values in it *)
-  let m = T.to_map map in
+  let map = old () in
+  update_and_readback map t ~update_msg:"initial map"
+      ~readback_msg:"readback of initial map" node >>= fun m ->
+  OUnit.assert_equal m map;
   assert_resolves m ip1 (confirm time1 mac1);
   assert_resolves m ip2 (confirm time2 mac2);
   assert_pending m ip3;
@@ -147,7 +149,7 @@ let merge_conflicts_solved _ctx =
     ~into:t >>= function
   | `Conflict s -> OUnit.assert_failure (Printf.sprintf "Got a merge conflict before we expected
                      one: %s\n%!" s)
-  | `Ok updated_t -> (* all's well; try merging the other branch *)
+  | `Ok () -> (* all's well; try merging the other branch *)
     (* hm, not sure what happens if we try to merge into t vs updated_t here;
        possibly influenced by the fact that t is a store and not a view? *)
     Irmin.merge "Merging expired_removed into master" exp_branch ~into:t
@@ -155,8 +157,16 @@ let merge_conflicts_solved _ctx =
     | `Conflict s -> OUnit.assert_failure (Printf.sprintf "Got a merge conflict
                                              when we (sort of) expected one:
                                              %s\n%!" s)
-    | `Ok tree -> OUnit.assert_failure "Didn't get a merge conflict?"
-    
+    | `Ok () -> 
+      (* the tree should have ip3 resolved, ip1 gone, ip2 unchanged, nothing
+         else *)
+      Irmin.read_exn (t "final readback") node >>= fun map ->
+      let map = T.to_map map in
+      assert_absent map ip1;
+      assert_resolves map ip2 (confirm time2 mac2);
+      assert_resolves map ip3 (confirm time3 mac3);
+      OUnit.assert_equal ~printer:string_of_int 2 (Ipv4_map.cardinal map);
+      Lwt.return_unit
 
 let main () =
   readback_works () >>= fun () ->
