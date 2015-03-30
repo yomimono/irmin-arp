@@ -111,65 +111,41 @@ let merge_conflicts_solved _ctx =
     let map = T.to_map map in
     Lwt.return (Ipv4_map.remove ip1 map)
   in
+  let clone_update t ~read_msg ~update_msg ~branch_name node fn =
+    Irmin.clone Irmin_unix.task (t read_msg) branch_name >>= function
+    | `Duplicated_tag -> OUnit.assert_failure "duplicate tag, nonsensibly"
+    | `Ok branch ->
+      fn branch node >>= fun map ->
+      Irmin.update (branch update_msg) node (T.of_map map) >>=
+      fun () -> Lwt.return branch
+  in
   make_in_memory () >>= fun t ->
   (* initialize data *) 
   let node = T.Path.empty in
   let original = T.of_map (old ()) in
   Irmin.update (t "original map") node original >>= fun () ->
-  (* make two branches *)
-  let pending_resolved = 
-    Irmin.clone Irmin_unix.task (t "clone map")
-      "pending_resolved" >>= function
-    | `Duplicated_tag -> 
-      OUnit.assert_failure "tag claimed to be duplicated on a fresh in-memory
-    store"
-    | `Ok resolved_branch ->
-      (* set previously-pending entry ip3 to a value (arp reply received!) *)
-      resolve_pending resolved_branch node >>= fun map -> 
-      (* write it back *)
-      Irmin.update (resolved_branch "resolve arp entry") node (T.of_map map) >>=
-      fun () -> Lwt.return resolved_branch
-  in
-  let expired_removed = 
-    Irmin.clone Irmin_unix.task (t "clone map") "expired_removed" >>= function
-    | `Duplicated_tag ->
-      OUnit.assert_failure "tag claimed to be duplicated on an almost-fresh in-memory
-    store"
-    | `Ok remove_branch ->
-      remove_expired remove_branch node >>= fun map ->
-      Irmin.update (remove_branch "remove expired entries") node (T.of_map map)
-        >>= fun () -> Lwt.return remove_branch
-  in
-  pending_resolved >>= fun pend_branch -> 
-  expired_removed >>= fun exp_branch ->
+  clone_update t ~read_msg:"clone map" ~update_msg:"resolve arp entry"
+    ~branch_name:"pending_resolved" node resolve_pending
+  >>= fun pend_branch ->
+  clone_update t ~read_msg:"clone map" ~update_msg:"remove expired entries"
+    ~branch_name:"expired_removed" node remove_expired
+  >>= fun exp_branch ->
   (* both branches (expired_removed, pending_resolved) should now be written
      into Irmin store *)
   (* try merging first one, then the other, into master (t) *)
-  Irmin.merge "Merging pending_resolved into into master" pend_branch
-    ~into:t >>= function
-  | `Conflict s -> OUnit.assert_failure (Printf.sprintf "Got a merge conflict before we expected
-                     one: %s\n%!" s)
-  | `Ok () -> (* all's well; try merging the other branch *)
-    (* hm, not sure what happens if we try to merge into t vs updated_t here;
-       possibly influenced by the fact that t is a store and not a view? *)
-    Irmin.merge "Merging expired_removed into master" exp_branch ~into:t
-    >>= function
-    | `Conflict s -> OUnit.assert_failure (Printf.sprintf "Got a merge conflict
-                                             when we (sort of) expected one:
-                                             %s\n%!" s)
-    | `Ok () -> 
-      (* the tree should have ip3 resolved, ip1 gone, ip2 unchanged, nothing
+  Irmin.merge_exn "Merging pending_resolved into master" pend_branch ~into:t >>= 
+  fun () ->
+  Irmin.merge_exn "Merging expired_removed into master" exp_branch ~into:t >>= 
+  fun () ->
+  (* the tree should have ip3 resolved, ip1 gone, ip2 unchanged, nothing
          else *)
-      Irmin.read_exn (t "final readback") node >>= fun map ->
-      let map = T.to_map map in
-      assert_absent map ip1;
-      assert_resolves map ip2 (confirm time2 mac2);
-      assert_resolves map ip3 (confirm time3 mac3);
-      OUnit.assert_equal ~printer:string_of_int 2 (Ipv4_map.cardinal map);
-      Lwt.return_unit
-
-(* TODO: clean up merge_conflicts_solved, write test for updates to the same
-   node to be sure precedence rules are followed *)
+  Irmin.read_exn (t "final readback") node >>= fun map ->
+  let map = T.to_map map in
+  assert_absent map ip1;
+  assert_resolves map ip2 (confirm time2 mac2);
+  assert_resolves map ip3 (confirm time3 mac3);
+  OUnit.assert_equal ~printer:string_of_int 2 (Ipv4_map.cardinal map);
+  Lwt.return_unit
 
 let main () =
   readback_works () >>= fun () ->
