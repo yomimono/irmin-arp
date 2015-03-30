@@ -46,14 +46,14 @@ let readback_works _ctx =
   OUnit.assert_equal map wrapped_old;
   (* and it has the right values in it *)
   let m = T.to_map map in
-  let assert_in m k = 
+  let assert_in m k =
     OUnit.assert_equal ~printer:string_of_bool (Ipv4_map.mem k m) true in
   let assert_resolves m k v =
     assert_in m k;
     OUnit.assert_equal ~printer:Entry.to_string (Ipv4_map.find k m) v in
   let assert_pending m k =
     assert_in m k;
-    OUnit.assert_equal ~printer:string_of_bool 
+    OUnit.assert_equal ~printer:string_of_bool
       (Entry.is_pending (Ipv4_map.find k m)) true in
 
   assert_resolves m ip1 (confirm time1 mac1);
@@ -61,8 +61,36 @@ let readback_works _ctx =
   assert_pending m ip3;
   return_unit
 
+let updates_work _cts =
+  let node = T.Path.empty in
+  let original = T.of_map (old ()) in
+  make_in_memory () >>= fun t ->
+  Irmin.update (t "original map") node original >>= fun () ->
+  (* clone, branch, update, merge *)
+  (* all the examples use `clone_force`, which just overwrites on name
+     collisions *)
+  Irmin.clone Irmin_unix.task (t "clone original map") "age_out" >>= function
+  | `Duplicated_tag ->
+    OUnit.assert_failure "tag claimed to be duplicated on a fresh in-memory
+    store"
+  | `Ok x ->
+    (* yay, we have a clone; let's modify it! *)
+    Irmin.read_exn (x "get map from clone") node >>= fun m ->
+    let m = T.to_map m in
+    (* remove the oldest entry *)
+    let m = Ipv4_map.remove ip1 m in
+    (* store it back on age_out branch *)
+    Irmin.update (x "aged out entries") node (T.of_map m) >>= fun updated_branch
+    ->
+    (* now try to merge age_out back into master *)
+    Irmin.merge_exn "Merging age_out into master" x ~into:t >>= fun () ->
+    (* x and t should now both be missing the entry we removed for ip1 *)
+
+    return_unit
+
 let main () =
-  readback_works ()
+  readback_works () >>= fun () ->
+  updates_work ()
 
 let () =
   Lwt_unix.run (main ())
