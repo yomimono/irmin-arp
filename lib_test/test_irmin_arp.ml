@@ -19,12 +19,22 @@ let ip1, mac1, time1 = parse "192.168.3.11" "10:9a:dd:00:00:11" 0.0
 let ip2, mac2, time2 = parse "192.168.3.22" "00:16:3e:00:00:22" 1.5
 let ip3 = Ipaddr.V4.of_string_exn "192.168.3.50"
 
+let assert_in m k =
+  OUnit.assert_equal ~printer:string_of_bool (Ipv4_map.mem k m) true
+let assert_resolves m k v =
+  assert_in m k;
+  OUnit.assert_equal ~printer:Entry.to_string (Ipv4_map.find k m) v
+let assert_pending m k =
+  assert_in m k;
+  OUnit.assert_equal ~printer:string_of_bool
+    (Entry.is_pending (Ipv4_map.find k m)) true
+let assert_absent m k =
+  OUnit.assert_equal ~printer:string_of_bool (Ipv4_map.mem k m) false
+
 let old () =
   let m = Ipv4_map.singleton ip1 (confirm time1 mac1) in
   let m = Ipv4_map.add ip2 (confirm time2 mac2) m in
   let m = Ipv4_map.add ip3 (Entry.make_pending ()) m in
-  (* need a way to get a Table.t from a map.  type t isn't exposed by irmin_arp,
-     so we can't just make it :( *)
   m
 
 (* make an in-memory new bare irmin thing *)
@@ -46,16 +56,6 @@ let readback_works _ctx =
   OUnit.assert_equal map wrapped_old;
   (* and it has the right values in it *)
   let m = T.to_map map in
-  let assert_in m k =
-    OUnit.assert_equal ~printer:string_of_bool (Ipv4_map.mem k m) true in
-  let assert_resolves m k v =
-    assert_in m k;
-    OUnit.assert_equal ~printer:Entry.to_string (Ipv4_map.find k m) v in
-  let assert_pending m k =
-    assert_in m k;
-    OUnit.assert_equal ~printer:string_of_bool
-      (Entry.is_pending (Ipv4_map.find k m)) true in
-
   assert_resolves m ip1 (confirm time1 mac1);
   assert_resolves m ip2 (confirm time2 mac2);
   assert_pending m ip3;
@@ -85,7 +85,10 @@ let updates_work _cts =
     (* now try to merge age_out back into master *)
     Irmin.merge_exn "Merging age_out into master" x ~into:t >>= fun () ->
     (* x and t should now both be missing the entry we removed for ip1 *)
-
+    Irmin.read_exn (t "get updated map after merge") node >>= fun new_m_from_t
+    ->
+    let new_m_from_t = T.to_map new_m_from_t in
+    OUnit.assert_equal new_m_from_t m;
     return_unit
 
 let main () =
