@@ -168,6 +168,9 @@ let merge_conflicts_solved _ctx =
       OUnit.assert_equal ~printer:string_of_int 2 (Ipv4_map.cardinal map);
       Lwt.return_unit
 
+(* TODO: clean up merge_conflicts_solved, write test for updates to the same
+   node to be sure precedence rules are followed *)
+
 let main () =
   readback_works () >>= fun () ->
   simple_update_works () >>= fun () -> 
