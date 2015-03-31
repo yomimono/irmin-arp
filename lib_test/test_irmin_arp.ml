@@ -197,16 +197,22 @@ let complex_merge_update_then_remove _ctx =
   check_map_contents (T.to_map map);
   Lwt.return_unit
 
-let main () =
-  readback_works () >>= fun () -> Printf.printf "readback works!\n";
-  simple_update_works () >>= fun () -> Printf.printf "simple update works!\n";
-  merge_conflicts_solved () >>= fun () -> Printf.printf "merge conflicts are solved!\n";
-  complex_merge_remove_then_update () >>= fun () -> Printf.printf 
-    "complex merge (ordering 1) went okay!\n"; 
-  complex_merge_update_then_remove () >>= fun () -> Printf.printf 
-    "complex merge (ordering 2) went okay!\n";
-  Printf.printf "All tests passed.\n";
-  Lwt.return_unit
+let lwt_run f () = Lwt_main.run (f ())
 
 let () =
-  Lwt_unix.run (main ())
+  let readback = [
+    "readback", `Slow, lwt_run readback_works;
+  ] in
+  let update = [
+    "simple_update", `Slow, lwt_run simple_update_works;
+  ] in
+  let merge = [
+    "merge w/divergent nodes", `Slow, lwt_run merge_conflicts_solved;
+    "merge w/conflict; remove then update", `Slow, lwt_run complex_merge_remove_then_update;
+    "merge w/conflict; update then remove", `Slow, lwt_run complex_merge_update_then_remove;
+  ] in
+  Alcotest.run "Irmin_arp" [
+    "readback", readback;
+    "update", update;
+    "merge", merge;
+  ]
