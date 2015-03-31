@@ -6,7 +6,7 @@ module Entry = struct
 
   let to_string = function
     | Confirmed (time, mac) -> Printf.sprintf "%s expiring at %f"
-                               (Macaddr.to_bytes mac) time
+                               (Macaddr.to_string mac) time
     | Pending _ -> "Waiting to resolve..."
 
   let is_pending = function
