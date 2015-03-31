@@ -20,16 +20,19 @@ let make_in_memory () =
   Irmin.create store config Irmin_unix.task
 
 let assert_in m k =
-  OUnit.assert_equal ~printer:string_of_bool (Ipv4_map.mem k m) true
+  OUnit.assert_equal ~msg:"asserting presence of key fails"
+    ~printer:string_of_bool true (Ipv4_map.mem k m)
 let assert_resolves m k v =
   assert_in m k;
-  OUnit.assert_equal ~printer:Entry.to_string (Ipv4_map.find k m) v
+  OUnit.assert_equal ~printer:Entry.to_string v (Ipv4_map.find k m)
 let assert_pending m k =
   assert_in m k;
-  OUnit.assert_equal ~printer:string_of_bool
-    (Entry.is_pending (Ipv4_map.find k m)) true
+  OUnit.assert_equal ~msg:"asserting pending status of key's value fails" 
+    ~printer:string_of_bool true
+    (Entry.is_pending (Ipv4_map.find k m)) 
 let assert_absent m k =
-  OUnit.assert_equal ~printer:string_of_bool (Ipv4_map.mem k m) false
+  OUnit.assert_equal ~msg:"asserting absence of key fails" 
+    ~printer:string_of_bool false (Ipv4_map.mem k m)
 
 let old () =
   let m = Ipv4_map.singleton ip1 (confirm time1 mac1) in
@@ -41,6 +44,14 @@ let update_and_readback map t ~update_msg ~readback_msg node =
   Irmin.update (t update_msg) node (T.of_map map) >>= fun () ->
   Irmin.read_exn (t readback_msg) node >>= fun map ->
   Lwt.return (T.to_map map)
+
+let clone_update t ~read_msg ~update_msg ~branch_name node fn =
+  Irmin.clone Irmin_unix.task (t read_msg) branch_name >>= function
+  | `Duplicated_tag -> OUnit.assert_failure "duplicate tag, nonsensibly"
+  | `Ok branch ->
+    fn branch node >>= fun map ->
+    Irmin.update (branch update_msg) node (T.of_map map) >>=
+    fun () -> Lwt.return branch
 
 (* make an in-memory new bare irmin thing *)
 (* make a simple tree in it [old] *)
@@ -111,14 +122,6 @@ let merge_conflicts_solved _ctx =
     let map = T.to_map map in
     Lwt.return (Ipv4_map.remove ip1 map)
   in
-  let clone_update t ~read_msg ~update_msg ~branch_name node fn =
-    Irmin.clone Irmin_unix.task (t read_msg) branch_name >>= function
-    | `Duplicated_tag -> OUnit.assert_failure "duplicate tag, nonsensibly"
-    | `Ok branch ->
-      fn branch node >>= fun map ->
-      Irmin.update (branch update_msg) node (T.of_map map) >>=
-      fun () -> Lwt.return branch
-  in
   make_in_memory () >>= fun t ->
   (* initialize data *) 
   let node = T.Path.empty in
@@ -144,10 +147,66 @@ let merge_conflicts_solved _ctx =
   OUnit.assert_equal ~printer:string_of_int 2 (Ipv4_map.cardinal map);
   Lwt.return_unit
 
+let check_map_contents map =
+  assert_resolves map ip1 (confirm time3 mac1);
+  assert_resolves map ip2 (confirm time2 mac2);
+  assert_pending map ip3;
+  OUnit.assert_equal ~printer:string_of_int 3 (Ipv4_map.cardinal map)
+
+let remove_expired branch node =
+  Irmin.read_exn (branch "read map") node >>= fun map ->
+  let map = T.to_map map in
+  Lwt.return (Ipv4_map.remove ip1 map)
+
+let update_expired branch node =
+  Irmin.read_exn (branch "read map") node >>= fun map ->
+  let map = T.to_map map in
+  Lwt.return (Ipv4_map.add ip1 (confirm time3 mac1) map)
+
+let complex_merge_remove_then_update _ctx =
+  make_in_memory () >>= fun t ->
+  let node = T.Path.empty in
+  let original = T.of_map (old ()) in
+  Irmin.update (t "original map") node original >>= fun () ->
+  clone_update t ~read_msg:"clone map" ~update_msg:"remove old entries"
+    ~branch_name:"remove_expired" node remove_expired
+  >>= fun expire_branch ->
+  clone_update t ~read_msg:"clone map" ~update_msg:"update cache"
+    ~branch_name:"update_entries" node update_expired
+  >>= fun update_branch ->
+  Irmin.merge_exn "remove_expired -> master" expire_branch ~into:t >>= fun () ->
+  Irmin.merge_exn "update_entries -> master" update_branch ~into:t >>= fun () ->
+  Irmin.read_exn (t "final readback") node >>= fun map ->
+  check_map_contents (T.to_map map);
+  Lwt.return_unit
+
+let complex_merge_update_then_remove _ctx =
+  make_in_memory () >>= fun t ->
+  let node = T.Path.empty in
+  let original = T.of_map (old ()) in
+  Irmin.update (t "original map") node original >>= fun () ->
+  clone_update t ~read_msg:"clone map" ~update_msg:"update cache"
+    ~branch_name:"update_entries" node update_expired
+  >>= fun update_branch ->
+  clone_update t ~read_msg:"clone map" ~update_msg:"remove old entries"
+    ~branch_name:"remove_expired" node remove_expired
+  >>= fun expire_branch ->
+  Irmin.merge_exn "update_entries -> master" update_branch ~into:t >>= fun () ->
+  Irmin.merge_exn "remove_expired -> master" expire_branch ~into:t >>= fun () ->
+  Irmin.read_exn (t "final readback") node >>= fun map ->
+  check_map_contents (T.to_map map);
+  Lwt.return_unit
+
 let main () =
-  readback_works () >>= fun () ->
-  simple_update_works () >>= fun () -> 
-  merge_conflicts_solved ()
+  readback_works () >>= fun () -> Printf.printf "readback works!\n";
+  simple_update_works () >>= fun () -> Printf.printf "simple update works!\n";
+  merge_conflicts_solved () >>= fun () -> Printf.printf "merge conflicts are solved!\n";
+  complex_merge_remove_then_update () >>= fun () -> Printf.printf 
+    "complex merge (ordering 1) went okay!\n"; 
+  complex_merge_update_then_remove () >>= fun () -> Printf.printf 
+    "complex merge (ordering 2) went okay!\n";
+  Printf.printf "All tests passed.\n";
+  Lwt.return_unit
 
 let () =
   Lwt_unix.run (main ())
