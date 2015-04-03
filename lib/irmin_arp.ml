@@ -75,7 +75,7 @@ end = struct
     let size_of _ = 0
     let hash p = 0
     let compare = M.compare (Entry.compare)
-    let equal p q = true
+    let equal p q = (compare p q) = 0
     let of_json json = 
       let top_dict = Ezjsonm.get_dict json in
       (* members of top_dict are (name: entry) pairs *)

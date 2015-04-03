@@ -78,6 +78,19 @@ let read_populated_map () =
                      Pending"
   | Entry.Pending _ -> OUnit.assert_equal 1 1
 
+let empty_maps_equal () =
+  OUnit.assert_equal true (T.Ops.equal (Ipv4_map.empty) (Ipv4_map.empty))
+
+let empty_populated_unequal () =
+  let p = Ipv4_map.empty in
+  let q = sample_table () in
+  OUnit.assert_equal false (T.Ops.equal p q)
+
+let differently_populated_unequal () =
+  let p = Ipv4_map.singleton ip1 (confirm time1 mac1) in
+  let q = sample_table () in
+  OUnit.assert_equal false (T.Ops.equal p q)
+
 let () =
   let read_write_size = [
 
@@ -94,7 +107,9 @@ let () =
 
   ] in
   let comp_eq = [
-
+    "empty_maps_equal", `Slow, empty_maps_equal;
+    "empty_and_populated_unequal", `Slow, empty_populated_unequal;
+    "differently_populated_unequal", `Slow, differently_populated_unequal
   ] in
   Alcotest.run "Irmin_arp.Ops" [
     "read_write_size", read_write_size;
