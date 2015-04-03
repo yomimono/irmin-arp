@@ -91,6 +91,26 @@ let differently_populated_unequal () =
   let q = sample_table () in
   OUnit.assert_equal false (T.Ops.equal p q)
 
+let smaller () =
+  let p = Ipv4_map.singleton ip1 (confirm time1 mac1) in
+  let q = sample_table () in
+  OUnit.assert_equal (-1) (T.Ops.compare (Ipv4_map.empty) q);
+  OUnit.assert_equal (-1) (T.Ops.compare p q)
+
+let larger () =
+  let p = Ipv4_map.singleton ip1 (confirm time1 mac1) in
+  let q = sample_table () in
+  OUnit.assert_equal 1 (T.Ops.compare q (Ipv4_map.empty));
+  OUnit.assert_equal 1 (T.Ops.compare q p)
+
+let entry_values () =
+  let p = sample_table () in
+  (* p will have time == 1.5 *)
+  let q = Ipv4_map.add ip2 (confirm 2.0 mac2) p in
+  let r = Ipv4_map.add ip2 (Entry.make_pending ()) p in
+  OUnit.assert_equal ~printer:string_of_int (-1) (T.Ops.compare p q);
+  OUnit.assert_equal ~printer:string_of_int 1 (T.Ops.compare p r)
+
 let () =
   let read_write_size = [
 
@@ -109,7 +129,10 @@ let () =
   let comp_eq = [
     "empty_maps_equal", `Slow, empty_maps_equal;
     "empty_and_populated_unequal", `Slow, empty_populated_unequal;
-    "differently_populated_unequal", `Slow, differently_populated_unequal
+    "differently_populated_unequal", `Slow, differently_populated_unequal;
+    "smaller_is_recognized_compare", `Slow, smaller;
+    "larger_is_recognized_compare", `Slow, larger;
+    "different_entry_values_compare", `Slow, entry_values
   ] in
   Alcotest.run "Irmin_arp.Ops" [
     "read_write_size", read_write_size;
