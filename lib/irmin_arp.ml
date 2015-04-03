@@ -70,10 +70,7 @@ end = struct
   module Ops = struct
     type t = Entry.t M.t (* map from ip -> entry *)
 
-    let read buf = M.empty
-    let write b buf = Cstruct.create 0
-    let size_of _ = 0
-    let hash p = 0
+    let hash = Hashtbl.hash
     let compare = M.compare (Entry.compare)
     let equal p q = (compare p q) = 0
     let of_json json = 
@@ -99,6 +96,24 @@ end = struct
                                                   (Ipaddr.V4.to_string key) (Entry.to_string value)))
       in
       M.fold add_binding map (Ezjsonm.dict [])
+
+    let read buf = 
+      let str = Mstruct.to_string buf in
+      let json = 
+        try 
+          Ezjsonm.unwrap (Ezjsonm.from_string str)
+        with Ezjsonm.Parse_error _ -> raise (Tc.Read_error "invalid json")
+      in
+      of_json json
+
+    (* no regrets *)
+        (* why is there no signalling like "uh bro I can't fit in here"? *)
+    let write m buf = 
+      let s = Ezjsonm.to_string (Ezjsonm.wrap (to_json m)) in
+      Cstruct.blit_from_string s 0 buf 0 (String.length s);
+      Cstruct.create (String.length s + 60) (* totally arbitrarily *)
+
+    let size_of m = String.length (Ezjsonm.to_string (Ezjsonm.wrap (to_json m)))
   end
 
   include Ops

@@ -111,9 +111,28 @@ let entry_values () =
   OUnit.assert_equal ~printer:string_of_int (-1) (T.Ops.compare p q);
   OUnit.assert_equal ~printer:string_of_int 1 (T.Ops.compare p r)
 
+let equal_things_equal_size () = 
+  let p = Ipv4_map.empty in
+  OUnit.assert_equal (T.Ops.size_of p) (T.Ops.size_of Ipv4_map.empty);
+  let p = Ipv4_map.singleton ip1 (confirm time1 mac1) in
+  let q = Ipv4_map.singleton ip1 (confirm time1 mac1) in
+  OUnit.assert_equal (T.Ops.size_of p) (T.Ops.size_of q);
+  let p = sample_table () in
+  let q = sample_table () in
+  OUnit.assert_equal (T.Ops.size_of p) (T.Ops.size_of q)
+
+let larger_things_larger_size () =
+  let p = Ipv4_map.singleton ip1 (confirm time1 mac1) in
+  let q = sample_table () in
+  OUnit.assert_equal true ((T.Ops.size_of p) < (T.Ops.size_of q))
+
+
 let () =
   let read_write_size = [
-
+    (* don't bother testing read and write, since they're just wrappers around
+       the json functions *)
+    "equal_things_equal_size", `Slow, equal_things_equal_size;
+    "larger_things_larger_size", `Slow, larger_things_larger_size
   ] in
   let json = [ 
     "write_empty_map", `Slow, write_empty_json;
@@ -122,9 +141,6 @@ let () =
     "read_empty_map", `Slow, read_empty_json;
     "read_singleton_map", `Slow, read_singleton_map;
     "read_populated_map", `Slow, read_populated_map
-  ] in
-  let hash = [
-
   ] in
   let comp_eq = [
     "empty_maps_equal", `Slow, empty_maps_equal;
@@ -137,7 +153,6 @@ let () =
   Alcotest.run "Irmin_arp.Ops" [
     "read_write_size", read_write_size;
     "from_to_json", json;
-    "hash", hash;
     "compare_equal", comp_eq
   ]
 
