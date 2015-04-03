@@ -13,13 +13,25 @@ Library irmin_arp
   Modules:         Irmin_arp
   BuildDepends:    irmin, lwt, ipaddr, ezjsonm
 
+Executable test_ops
+  Build$:         flag(tests)
+  Path:           lib_test
+  MainIs:         test_ops.ml
+  CompiledObject: best
+  Install:        false
+  BuildDepends:   irmin, irmin_arp, lwt, irmin.unix, ipaddr, alcotest, oUnit
+
 Executable test_irmin_arp
   Build$:         flag(tests)
   Path:           lib_test
   MainIs:         test_irmin_arp.ml
   CompiledObject: best
   Install:        false
-  BuildDepends:   irmin, irmin_arp, lwt, irmin.unix, ipaddr, alcotest, ounit
+  BuildDepends:   irmin, irmin_arp, lwt, irmin.unix, ipaddr, alcotest, oUnit
+
+Test test_ops
+  Run$: flag(tests)
+  Command: $test_ops
 
 Test test_irmin_arp
   Run$: flag(tests)
