@@ -146,8 +146,8 @@ end = struct
   let merge _path ~(old : Entry.t M.t Irmin.Merge.promise) t1 t2 = 
     let open Irmin.Merge.OP in
     old () >>| fun old -> 
-    (* TODO: we might be able to do something more intelligent when we can't
-       find a common ancestor? *)
+    (* TODO: it would be nicer to only wait on the computation of the LCA in the
+       case where we actually need it to resolve a merge conflict *)
     let old = match old with None -> M.empty | Some old -> old in
     let merge_maps key val1 val2 =
       let comp_of_operation ~direction key present =
@@ -172,9 +172,7 @@ end = struct
         | Some present, None -> comp_of_operation ~direction:`Left key present
         | None, Some present -> comp_of_operation ~direction:`Right key present
       in
-      match (opt_compare val1 val2) with
-      | 1 | 0 -> val1
-      | -1 -> val2
+      if (opt_compare val1 val2) < 0 then val2 else val1
     in
     Irmin.Merge.OP.ok (M.merge merge_maps t1 t2)
 
