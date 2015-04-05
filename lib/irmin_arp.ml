@@ -143,26 +143,42 @@ end = struct
   let to_map t = t
   let of_map = to_map
 
-  let merge _path ~old t1 t2 = 
-    let module Map_merge = Irmin.Merge.Map(M)(Key) in
-
+  let merge _path ~(old : Entry.t M.t Irmin.Merge.promise) t1 t2 = 
+    let open Irmin.Merge.OP in
+    old () >>| fun old -> 
+    (* TODO: we might be able to do something more intelligent when we can't
+       find a common ancestor? *)
+    let old = match old with None -> M.empty | Some old -> old in
     let merge_maps key val1 val2 =
+      let comp_of_operation ~direction key present =
+        let operation key new_value =
+          match M.mem key old with
+          | false -> `Added
+          | true -> 
+            let old_value = M.find key old in
+            if new_value = old_value then `Unchanged else `Modified
+        in
+        let multiplier = match direction with | `Left -> 1 | `Right -> -1 in
+        match operation key present with
+        | `Added -> multiplier * 1 (* element added in t1, keep it *)
+        | `Unchanged -> multiplier * -1 (* element removed by t2, remove it *)
+        | `Modified -> multiplier * 1 (* element modified by t1 and removed by t2.  keep the
+                                         modified value *)
+      in
       let opt_compare v1 v2 =
         match v1, v2 with
         | None, None -> 0
-        | Some v1, None -> 1
-        | None, Some v2 -> -1
         | Some v1, Some v2 -> Entry.compare v1 v2
+        | Some present, None -> comp_of_operation ~direction:`Left key present
+        | None, Some present -> comp_of_operation ~direction:`Right key present
       in
       match (opt_compare val1 val2) with
       | 1 | 0 -> val1
       | -1 -> val2
     in
-
-    (* any nodes removed in both t1 and t2 should stay removed, so we don't
-       bother merging old vs t1/t2 *)
     Irmin.Merge.OP.ok (M.merge merge_maps t1 t2)
 
+  module Map_merge = Irmin.Merge.Map(M)(Key)
   let merge path = Irmin.Merge.option (module Ops) (merge path)
 
 end
