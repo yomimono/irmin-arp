@@ -1,3 +1,24 @@
+module Key = struct
+  (* provide Tc.S0 stuff for Ipaddr.V4.t *)
+  include Ipaddr.V4
+
+  let read buf = (Ipaddr.V4.of_string_exn (Mstruct.to_string buf))
+  let write k buf = 
+    let s  = Ipaddr.V4.to_string k in
+    Cstruct.blit_from_string s 0 buf 0 (String.length s);
+    Cstruct.sub buf (String.length s) (Cstruct.len buf - (String.length s))
+  let size_of k = String.length (Ipaddr.V4.to_string k)
+  let to_json k = Ezjsonm.string (Ipaddr.V4.to_string k)
+  let of_json = function
+    | `String s -> Ipaddr.V4.of_string_exn s
+    | `Null | `Bool _ | `O _ | `A _ | `Float _ -> raise (Tc.Read_error "invalid
+                                                            json")
+
+  let hash = Hashtbl.hash
+  let equal p q = (Ipaddr.V4.compare p q) = 0
+
+end
+
 module Entry = struct
 
   type result = [ `Ok of Macaddr.t | `Timeout ]
@@ -110,8 +131,9 @@ end = struct
         (* why is there no signalling like "uh bro I can't fit in here"? *)
     let write m buf = 
       let s = Ezjsonm.to_string (Ezjsonm.wrap (to_json m)) in
-      Cstruct.blit_from_string s 0 buf 0 (String.length s);
-      Cstruct.create (String.length s + 60) (* totally arbitrarily *)
+      let to_blit = String.length s in
+      Cstruct.blit_from_string s 0 buf 0 to_blit;
+      Cstruct.sub buf to_blit ((Cstruct.len buf) - to_blit)
 
     let size_of m = String.length (Ezjsonm.to_string (Ezjsonm.wrap (to_json m)))
   end
@@ -121,7 +143,27 @@ end = struct
   let to_map t = t
   let of_map = to_map
 
-  let merge _path = Irmin.Merge.default (module Tc.Option(Ops))
+  let merge _path ~old t1 t2 = 
+    let module Map_merge = Irmin.Merge.Map(M)(Key) in
+
+    let merge_maps key val1 val2 =
+      let opt_compare v1 v2 =
+        match v1, v2 with
+        | None, None -> 0
+        | Some v1, None -> 1
+        | None, Some v2 -> -1
+        | Some v1, Some v2 -> Entry.compare v1 v2
+      in
+      match (opt_compare val1 val2) with
+      | 1 | 0 -> val1
+      | -1 -> val2
+    in
+
+    (* any nodes removed in both t1 and t2 should stay removed, so we don't
+       bother merging old vs t1/t2 *)
+    Irmin.Merge.OP.ok (M.merge merge_maps t1 t2)
+
+  let merge path = Irmin.Merge.option (module Ops) (merge path)
 
 end
 
