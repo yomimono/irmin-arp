@@ -16,7 +16,9 @@ let ip3, mac3, time3 = parse ip3_str mac3_str 2.0
 let sample_table () =
   let m = Ipv4_map.singleton ip1 (confirm time1 mac1) in
   let m = Ipv4_map.add ip2 (confirm time2 mac2) m in
-  let m = Ipv4_map.add ip3 (Entry.make_pending ()) m in
+  let m = 
+    let noop = Lwt.task () in
+    Ipv4_map.add ip3 (Entry.make_pending noop) m in
   m
 
 let assert_in m k =

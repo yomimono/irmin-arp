@@ -1,4 +1,6 @@
-module Key = struct
+module Key : sig
+  include Tc.S0 with type t = Ipaddr.V4.t
+end = struct
   (* provide Tc.S0 stuff for Ipaddr.V4.t *)
   include Ipaddr.V4
 
@@ -19,7 +21,20 @@ module Key = struct
 
 end
 
-module Entry = struct
+module Entry : sig
+  type result = [ `Ok of Macaddr.t | `Timeout ]
+  type t = 
+    | Pending of result Lwt.t * result Lwt.u
+    | Confirmed of float * Macaddr.t
+
+  val to_string : t -> string
+  val to_json : t -> Ezjsonm.value
+  val of_json : Ezjsonm.value -> t option
+  val compare : t -> t -> int
+  val make_confirmed : float -> Macaddr.t -> t
+  val make_pending : (result Lwt.t * result Lwt.u) -> t
+  val is_pending : t -> bool
+end = struct
 
   type result = [ `Ok of Macaddr.t | `Timeout ]
   type t = 
@@ -62,7 +77,6 @@ module Entry = struct
     | Pending _ -> true
 
   (* confirmed trumps pending
-     absent trumps nonpending (with additional timing logic?)
      pending trumps absent *)
   let compare p q =
     match (p, q) with
@@ -71,7 +85,7 @@ module Entry = struct
     | Confirmed (p_time, _), Confirmed (q_time, _) -> compare p_time q_time
     | Confirmed _, Pending _ -> 1 
 
-  let make_pending () = let t, u = Lwt.task () in Pending (t, u)
+  let make_pending (thread, waker) = Pending (thread, waker)
   let make_confirmed f m = Confirmed (f, m)
 end
 
@@ -174,7 +188,6 @@ end = struct
     in
     Irmin.Merge.OP.ok (M.merge merge_maps t1 t2)
 
-  module Map_merge = Irmin.Merge.Map(M)(Key)
   let merge path = Irmin.Merge.option (module Ops) (merge path)
 
 end

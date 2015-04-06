@@ -100,9 +100,10 @@ let larger () =
 
 let entry_values () =
   let p = sample_table () in
+  let noop = Lwt.task () in
   (* p will have time == 1.5 *)
   let q = Ipv4_map.add ip2 (confirm 2.0 mac2) p in
-  let r = Ipv4_map.add ip2 (Entry.make_pending ()) p in
+  let r = Ipv4_map.add ip2 (Entry.make_pending noop) p in
   OUnit.assert_equal ~printer:string_of_int (-1) (T.Ops.compare p q);
   OUnit.assert_equal ~printer:string_of_int 1 (T.Ops.compare p r)
 
