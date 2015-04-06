@@ -189,3 +189,9 @@ end = struct
 
 end
 
+module Arp = struct
+  module Make (Ethif : V1_LWT.ETHIF) = struct
+    type t = { ethif: Ethif.t } 
+    let create ethif = `Ok { ethif; }
+  end
+end

@@ -10,8 +10,8 @@ BuildTools:  ocamlbuild
 Library irmin_arp
   Path:            lib/
   Findlibname:     irmin_arp
-  Modules:         Irmin_arp
-  BuildDepends:    irmin, lwt, ipaddr, ezjsonm
+  Modules:         Irmin_arp, Arp
+  BuildDepends:    irmin, lwt, ipaddr, ezjsonm, mirage-types
 
 Executable test_ops
   Build$:         flag(tests)
@@ -35,7 +35,7 @@ Executable test_arp
   MainIs:         test_arp.ml
   CompiledObject: best
   Install:        false
-  BuildDepends:   irmin, irmin_arp, lwt, irmin.unix, ipaddr, alcotest, oUnit
+  BuildDepends:   irmin, irmin_arp, lwt, irmin.unix, ipaddr, tcpip.ethif, alcotest, oUnit, mirage-vnetif, mirage-types
 
 Test test_ops
   Run$: flag(tests)
