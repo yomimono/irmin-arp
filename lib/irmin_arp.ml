@@ -13,12 +13,10 @@ end = struct
   let to_json k = Ezjsonm.string (Ipaddr.V4.to_string k)
   let of_json = function
     | `String s -> Ipaddr.V4.of_string_exn s
-    | `Null | `Bool _ | `O _ | `A _ | `Float _ -> raise (Tc.Read_error "invalid
-                                                            json")
-
+    | `Null | `Bool _ | `O _ | `A _ | `Float _ -> 
+      raise (Tc.Read_error "invalid json")
   let hash = Hashtbl.hash
   let equal p q = (Ipaddr.V4.compare p q) = 0
-
 end
 
 module Entry : sig
@@ -44,9 +42,9 @@ end = struct
   let pending_str = "Waiting to resolve..."
 
   let to_string = function
+    | Pending _ -> pending_str
     | Confirmed (time, mac) -> Printf.sprintf "%s expiring at %f"
                                (Macaddr.to_string mac) time
-    | Pending _ -> pending_str
 
   let to_json = function
     | Confirmed (time, mac) -> 
@@ -60,21 +58,18 @@ end = struct
     (* for now, don't try to reflect that we had tried to look up an entry *)
     | `String x when (String.compare x pending_str = 0) -> None
     | `O items -> (
-        try
-          let open Ezjsonm in
-        let address = Macaddr.of_string_exn 
-            (get_string (find (dict items) ["mac"])) in
-        let expiry = get_float (find (dict items) ["expiry"]) in
-        Some (Confirmed (expiry, address))
-      with
-      | Not_found -> None
+        try let open Ezjsonm in
+          let address = Macaddr.of_string_exn 
+              (get_string (find (dict items) ["mac"])) in
+          let expiry = get_float (find (dict items) ["expiry"]) in
+          Some (Confirmed (expiry, address))
+        with
+        | Not_found -> None
       )
     | `A _ | `Null | `Bool _ | `Float _ -> None
     | `String _ -> None
 
-  let is_pending = function
-    | Confirmed _ -> false
-    | Pending _ -> true
+  let is_pending = function | Confirmed _ -> false | Pending _ -> true
 
   (* confirmed trumps pending
      pending trumps absent *)
