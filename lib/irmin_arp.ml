@@ -42,10 +42,8 @@ module Entry = struct
       Ezjsonm.string pending_str
 
   let of_json (json : Ezjsonm.value) : t option = match json with
-    | `String x when (String.compare x pending_str = 0) -> 
-      (* TODO: create new threads to time out this entry after arp_timeout *)
-      let t, u = Lwt.task () in
-      Some (Pending (t, u))
+    (* for now, don't try to reflect that we had tried to look up an entry *)
+    | `String x when (String.compare x pending_str = 0) -> None
     | `O items -> (
         try
           let open Ezjsonm in

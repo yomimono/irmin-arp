@@ -64,19 +64,14 @@ let read_singleton_map () =
 
 let read_populated_map () =
   let j = T.Ops.to_json (sample_table ()) in
-  let in_map mem table = 
-    OUnit.assert_equal true (Ipv4_map.mem mem table)
-  in
   let new_table = T.Ops.of_json j in
-  OUnit.assert_equal 3 (Ipv4_map.cardinal new_table);
-  in_map ip1 new_table;
-  in_map ip2 new_table;
-  in_map ip3 new_table;
-  OUnit.assert_equal (confirm time2 mac2) (Ipv4_map.find ip2 new_table);
-  match Ipv4_map.find ip3 new_table with
-  | Entry.Confirmed _ -> OUnit.assert_failure "Value present for ip3 when it should be
-                     Pending"
-  | Entry.Pending _ -> OUnit.assert_equal 1 1
+  assert_in new_table ip1;
+  assert_in new_table ip2;
+  assert_absent new_table ip3; (* Pending entry not preserved *)
+  (* 2, since we don't preserve the Pending entry *)
+  OUnit.assert_equal 2 (Ipv4_map.cardinal new_table);
+  assert_resolves new_table ip1 (confirm time1 mac1);
+  assert_resolves new_table ip2 (confirm time2 mac2)
 
 let empty_maps_equal () =
   OUnit.assert_equal true (T.Ops.equal (Ipv4_map.empty) (Ipv4_map.empty))
