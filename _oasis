@@ -21,10 +21,10 @@ Executable test_ops
   Install:        false
   BuildDepends:   irmin, irmin_arp, lwt, irmin.unix, ipaddr, alcotest, oUnit
 
-Executable test_irmin_arp
+Executable test_table
   Build$:         flag(tests)
   Path:           lib_test
-  MainIs:         test_irmin_arp.ml
+  MainIs:         test_table.ml
   CompiledObject: best
   Install:        false
   BuildDepends:   irmin, irmin_arp, lwt, irmin.unix, ipaddr, alcotest, oUnit
@@ -33,6 +33,6 @@ Test test_ops
   Run$: flag(tests)
   Command: $test_ops
 
-Test test_irmin_arp
+Test test_table
   Run$: flag(tests)
-  Command: $test_irmin_arp
+  Command: $test_table
