@@ -89,7 +89,8 @@ end = struct
   let make_confirmed f m = Confirmed (f, m)
 end
 
-module Table(M: Map.S with type key = Ipaddr.V4.t)(P: Irmin.Path.S) : sig
+module Table(P: Irmin.Path.S) : sig
+  module M : Map.S with type key = Ipaddr.V4.t
   include Irmin.Contents.S 
   val to_map : t -> Entry.t M.t
   val of_map : Entry.t M.t -> t
@@ -99,6 +100,7 @@ module Table(M: Map.S with type key = Ipaddr.V4.t)(P: Irmin.Path.S) : sig
   end
 end = struct
   module Path = P
+  module M = Map.Make(Ipaddr.V4)
 
   module Ops = struct
     type t = Entry.t M.t (* map from ip -> entry *)

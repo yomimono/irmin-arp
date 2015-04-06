@@ -1,10 +1,5 @@
 open Test_lib
 
-module Ipv4_map = Map.Make(Ipaddr.V4)
-module T = Irmin_arp.Table(Ipv4_map)(Irmin.Path.String_list)
-
-(* serialization format is just JSON *)
-
 let write_empty_json () =
   (* empty map -> unit json *)
   let map = Ipv4_map.empty in

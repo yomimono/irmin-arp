@@ -1,18 +1,13 @@
 open Lwt
 open Test_lib
 
-module Ipv4_map = Map.Make(Ipaddr.V4)
-module Entry = Irmin_arp.Entry
-module Table = Irmin_arp.Table
-module P = Irmin.Path.String_list
-module T = Table(Ipv4_map)(P)
-
 let make_in_memory () =
   let store = Irmin.basic (module Irmin_mem.Make) (module T) in
   let config = Irmin_mem.config () in
   Irmin.create store config Irmin_unix.task
 
-let update_and_readback map t ~update_msg ~readback_msg node =
+let update_and_readback map t ~update_msg ~readback_msg node 
+  : Entry.t Ipv4_map.t Lwt.t =
   Irmin.update (t update_msg) node (T.of_map map) >>= fun () ->
   Irmin.read_exn (t readback_msg) node >>= fun map ->
   Lwt.return (T.to_map map)
