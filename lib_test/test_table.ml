@@ -134,7 +134,7 @@ let merge_conflicts_solved _ctx =
 let check_map_contents ~serialization map =
   assert_resolves map ip1 (confirm time3 mac1);
   assert_resolves map ip2 (confirm time2 mac2);
-  if check_serialization then 
+  if serialization then 
     begin
       assert_pending map ip3;
       OUnit.assert_equal ~printer:string_of_int 3 (Ipv4_map.cardinal map)
