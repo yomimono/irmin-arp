@@ -190,8 +190,87 @@ end = struct
 end
 
 module Arp = struct
+  (* much cribbed from mirage-tcpip/lib/arpv4.ml *)
   module Make (Ethif : V1_LWT.ETHIF) = struct
-    type t = { ethif: Ethif.t } 
-    let create ethif = `Ok { ethif; }
+    type arp = {
+      op: [ `Request |`Reply |`Unknown of int ];
+      sha: Macaddr.t;
+      spa: Ipaddr.V4.t;
+      tha: Macaddr.t;
+      tpa: Ipaddr.V4.t;
+    }
+
+    type t = { 
+      ethif: Ethif.t;
+      ips: Ipaddr.V4.t list;
+    } 
+
+    let is_garp ip buf = true
+
+    let arp_of_cstruct buf = None
+    let cstruct_of_arp query = None
+
+    let create ethif = { ethif; ips = [] }
+    let add_ip t ip = 
+      match List.mem ip (t.ips) with
+      | true -> Lwt.return t
+      | false -> Lwt.return { t with ips = (ip :: t.ips)}
+    let remove_ip t ip =
+      match List.mem ip (t.ips) with
+      | false -> Lwt.return t
+      | true -> 
+        let is_not_ip other_ip = ((Ipaddr.V4.compare ip other_ip) <> 0) in
+        Lwt.return { t with ips = (List.filter is_not_ip t.ips) }
+    let get_ips t = t.ips
+
+    (* construct an arp record representing a gratuitious arp announcement for
+       ip *)
+    let garp t ip =
+      { op = `Reply;
+        tha = Macaddr.broadcast;
+        sha = Ethif.mac t.ethif;
+        tpa = Ipaddr.V4.any;
+        spa = ip;
+      }
+
+    (* output taken directly from arpv4.ml *)
+    let output t arp =
+      let open Wire_structs.Arpv4_wire in
+      (* Obtain a buffer to write into *)
+      let buf = Cstruct.create (Wire_structs.Arpv4_wire.sizeof_arp +
+                                Wire_structs.sizeof_ethernet) in
+      (* Write the ARP packet *)
+      let dmac = Macaddr.to_bytes arp.tha in
+      let smac = Macaddr.to_bytes arp.sha in
+      let spa = Ipaddr.V4.to_int32 arp.spa in
+      let tpa = Ipaddr.V4.to_int32 arp.tpa in
+      let op =
+        match arp.op with
+        |`Request -> 1
+        |`Reply -> 2
+        |`Unknown n -> n
+      in
+      set_arp_dst dmac 0 buf;
+      set_arp_src smac 0 buf;
+      set_arp_ethertype buf 0x0806; (* ARP *)
+      set_arp_htype buf 1;
+      set_arp_ptype buf 0x0800; (* IPv4 *)
+      set_arp_hlen buf 6; (* ethernet mac size *)
+      set_arp_plen buf 4; (* ipv4 size *)
+      set_arp_op buf op;
+      set_arp_sha smac 0 buf;
+      set_arp_spa buf spa;
+      set_arp_tha dmac 0 buf;
+      set_arp_tpa buf tpa;
+      (* Resize buffer to sizeof arp packet *)
+      let buf = Cstruct.sub buf 0 sizeof_arp in
+      Ethif.write t.ethif buf
+
+    let set_ips t ips = 
+      (* it would be nice if there were some provision for "uh you really don't
+         want to do that, that IP is in the cache already" *)
+      List.map (fun ip -> output t (garp t ip)) ips;
+      Lwt.return { t with ips = ips }
   end
+
 end
