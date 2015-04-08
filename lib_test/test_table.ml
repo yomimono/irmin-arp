@@ -1,7 +1,7 @@
 open Lwt
 open Test_lib
 
-let root = "."
+let root = "test_results"
 
 let make_in_memory () =
   let store = Irmin.basic (module Irmin_mem.Make) (module T) in
