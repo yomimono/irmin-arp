@@ -42,7 +42,7 @@ let readback_works _ctx =
   assert_resolves m ip1 (confirm time1 mac1);
   assert_resolves m ip2 (confirm time2 mac2);
   (* TODO: these tests will only pass for in-memory storage backend;
-     deserializing destroys the thread references in pending nodes *)
+     serializing and deserializing destroys the thread references in pending nodes *)
   (* assert_pending m ip3; *)
   (* OUnit.assert_equal m map; *)
   Irmin.remove (t "readback_works: test succeeded; removing data") node >>= fun
