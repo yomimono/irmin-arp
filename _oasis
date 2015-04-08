@@ -11,7 +11,7 @@ Library irmin_arp
   Path:            lib/
   Findlibname:     irmin_arp
   Modules:         Irmin_arp, Arp
-  BuildDepends:    irmin, lwt, ipaddr, ezjsonm, mirage-types
+  BuildDepends:    irmin, lwt, ipaddr, tcpip, tcpip.ipv4, ezjsonm, mirage-types
 
 Executable test_ops
   Build$:         flag(tests)
@@ -35,7 +35,7 @@ Executable test_arp
   MainIs:         test_arp.ml
   CompiledObject: best
   Install:        false
-  BuildDepends:   irmin, irmin_arp, lwt, irmin.unix, ipaddr, tcpip.ethif, alcotest, oUnit, mirage-vnetif, mirage-types
+  BuildDepends:   irmin, irmin_arp, lwt, irmin.unix, ipaddr, tcpip.ethif, tcpip.ipv4, alcotest, oUnit, mirage-vnetif, mirage-types
 
 Test test_ops
   Run$: flag(tests)
