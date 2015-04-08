@@ -1,7 +1,7 @@
 open Lwt
 open Test_lib
 
-let root = "irmin_test"
+let root = "."
 
 let make_in_memory () =
   let store = Irmin.basic (module Irmin_mem.Make) (module T) in
@@ -25,11 +25,15 @@ let clone_update t ~read_msg ~update_msg ~branch_name node fn =
   Irmin.update (branch update_msg) node (T.of_map map) >>=
   fun () -> Lwt.return branch
 
+let test_node str = 
+  let step = T.Path.Step.of_hum in
+  T.Path.create [(step "test_results"); (step str)]
+
 let readback_works _ctx =
   make_on_disk ~root ~bare:false ()
   >>= fun t ->
   (* delete previous node contents *)
-  let node = T.Path.create [(T.Path.Step.of_hum "readback")] in
+  let node = T.Path.create (test_node "readback") in
   Irmin.remove (t "readback_works: new test begins") node >>= fun () ->
   (* try to store something; make sure we get it back out *)
   let map = sample_table () in
@@ -46,7 +50,7 @@ let readback_works _ctx =
   return_unit
 
 let simple_update_works _cts =
-  let node = T.Path.create [(T.Path.Step.of_hum "simple_update")] in
+  let node = T.Path.create (test_node "simple_update") in
   let original = T.of_map (sample_table ()) in
   make_on_disk ~root ~bare:false () >>= fun t ->
   Irmin.remove (t "simple_update: new test begins") node >>= fun () ->
@@ -94,8 +98,7 @@ let merge_conflicts_solved _ctx =
     let map = T.to_map map in
     Lwt.return (Ipv4_map.remove ip1 map)
   in
-  let node = T.Path.create [(T.Path.Step.of_hum
-                               "merge_conflicts_difft_nodes")] in
+  let node = T.Path.create (test_node "merge_conflicts_difft_nodes") in
   let original = T.of_map (sample_table ()) in
   make_on_disk ~root ~bare:false () >>= fun t ->
   Irmin.remove (t "merge_conflicts_difft_nodes: beginning new test") node
