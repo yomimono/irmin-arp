@@ -130,42 +130,6 @@ let input () =
   with
     Not_found -> OUnit.assert_failure "Expected cache entry not found in
     listener cache map, as read back from Irmin"
-  (* use on-disk git fs for cache so we can read it back and check it ourselves *)
-  let backend = B.create () in
-  or_error "backend" V.connect backend >>= fun speak_netif ->
-  or_error "ethif" E.connect speak_netif >>= fun speak_ethif ->
-  A.create speak_ethif speak_config >>= fun speak_arp ->
-  or_error "backend" V.connect backend >>= fun listen_netif ->
-  or_error "ethif" E.connect listen_netif >>= fun listen_ethif ->
-  A.create listen_ethif listen_config >>= fun listen_arp ->
-  (* send a GARP from one side (speak_arp) and make sure it was heard on the
-     other *)
-  Lwt.join [
-    (A.set_ips speak_arp [ my_ip ] >>= fun _a -> Lwt.return_unit) ;
-    (Lwt.pick [
-      V.listen listen_netif 
-        (fun buf -> 
-           Printf.printf "cool buffer!!\n"; 
-           A.input listen_arp buf >>= fun () -> V.disconnect listen_netif
-        );
-      Lwt_unix.sleep 0.1 >>= fun () -> 
-      OUnit.assert_failure "GARP not emitted within 100ms of call to set_ips"
-    ])
-  ] >>= fun () ->
-  (* load our own representation of the ARP cache of the listener *)
-  let store = Irmin.basic (module Irmin_backend) (module T) in
-  Irmin.create store listen_config Irmin_unix.task >>= fun store ->
-  Irmin.read_exn (store "readback of map") T.Path.empty >>= fun map ->
-  try
-    let open Entry in
-    match T.find my_ip map with 
-    | Confirmed (time, entry) -> OUnit.assert_equal entry (V.mac speak_netif);
-      Lwt.return_unit
-    | Pending _ -> OUnit.assert_failure "Pending entry for an entry that had a
-  GARP emitted on the same vnetif backend"
-  with
-    Not_found -> OUnit.assert_failure "Expected cache entry not found in
-    listener cache map, as read back from Irmin"
 
 let lwt_run f () = Lwt_main.run (f ())
 
