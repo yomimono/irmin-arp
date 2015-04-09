@@ -52,7 +52,7 @@ let timeout_or (backend, a) do_fn listen_fn =
   ]
 
 let set_ips () =
-  get_arp ~root:(root ^ "set_ips") () >>= fun (backend, a) ->
+  get_arp ~root:(root ^ "/set_ips") () >>= fun (backend, a) ->
   (* set up a listener that will return when it hears a GARP *)
   or_error "backend" V.connect backend >>= fun listen_netif ->
 (* TODO: according to the contract in arpv4.mli, add_ip, set_ip, and remove_ip
@@ -80,7 +80,7 @@ let set_ips () =
   Lwt.return_unit
 
 let get_remove_ips () =
-  get_arp ~root:(root ^ "remove_ips") () >>= fun (backend, a) ->
+  get_arp ~root:(root ^ "/remove_ips") () >>= fun (backend, a) ->
   OUnit.assert_equal [] (A.get_ips a);
   A.set_ips a [ my_ip; my_ip ] >>= fun a ->
   let ips = A.get_ips a in
