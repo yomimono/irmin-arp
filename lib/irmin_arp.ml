@@ -211,6 +211,8 @@ module Arp = struct
       tpa: Ipaddr.V4.t;
     }
 
+    type cache = (string -> ([ `BC ], T.Path.t, T.t) Irmin.t)
+
     type t = { 
       ethif: Ethif.t;
       bound_ips: Ipaddr.V4.t list;
@@ -347,6 +349,7 @@ module Arp = struct
       return_unit
 
     let set_ips t ips = 
+      let open Lwt in
       (* it would be nice if there were some provision for "uh you really don't
          want to do that, that IP is in the cache already" *)
       Lwt.join (List.map (fun ip -> output t (garp t ip)) ips) >>= fun () ->

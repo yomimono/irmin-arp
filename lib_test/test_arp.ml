@@ -121,7 +121,7 @@ let input () =
   Irmin.create store listen_config Irmin_unix.task >>= fun store ->
   Irmin.read_exn (store "readback of map") T.Path.empty >>= fun map ->
   try
-    let open Entry in
+    let open Irmin_arp.Entry in
     match T.find my_ip map with 
     | Confirmed (time, entry) -> OUnit.assert_equal entry (V.mac speak_netif);
       Lwt.return_unit
