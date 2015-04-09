@@ -104,17 +104,11 @@ let input_single_reply () =
   A.create listen_ethif listen_config >>= fun listen_arp ->
   (* send a GARP from one side (speak_arp) and make sure it was heard on the
      other *)
-  Lwt.join [
-    (A.set_ips speak_arp [ my_ip ] >>= fun _a -> Lwt.return_unit) ;
-    (Lwt.pick [
-      V.listen listen_netif 
-        (fun buf -> 
-           A.input listen_arp buf >>= fun () -> V.disconnect listen_netif
-        );
-      Lwt_unix.sleep 0.1 >>= fun () -> 
-      OUnit.assert_failure "GARP not emitted within 100ms of call to set_ips"
-    ])
-  ] >>= fun () ->
+  timeout_or ~timeout:0.1 ~msg:"Nothing received by listen_netif when trying to
+  do single reply test" 
+    listen_netif (fun () -> A.set_ips speak_arp [ my_ip ] >>= fun _a -> Lwt.return_unit) 
+    (fun () -> fun buf -> A.input listen_arp buf >>= fun () -> V.disconnect listen_netif)
+  >>= fun () ->
   (* load our own representation of the ARP cache of the listener *)
   let store = Irmin.basic (module Irmin_backend) (module T) in
   Irmin.create store listen_config Irmin_unix.task >>= fun store ->
@@ -130,7 +124,50 @@ let input_single_reply () =
     Not_found -> OUnit.assert_failure "Expected cache entry not found in
     listener cache map, as read back from Irmin"
 
-let input_changed_ip () = Lwt.return_unit
+let input_changed_ip () = 
+  let root = root ^ "/input_changed_ip" in
+  let listen_config = Irmin_storer.config ~root:(root ^ "/listener") () in
+  let speak_config = Irmin_storer.config ~root:(root ^ "/speaker") () in
+  let backend = B.create () in
+  or_error "backend" V.connect backend >>= fun speak_netif ->
+  or_error "ethif" E.connect speak_netif >>= fun speak_ethif ->
+  A.create speak_ethif speak_config >>= fun speak_arp ->
+  or_error "backend" V.connect backend >>= fun listen_netif ->
+  or_error "ethif" E.connect listen_netif >>= fun listen_ethif ->
+  A.create listen_ethif listen_config >>= fun listen_arp ->
+  let multiple_ips () =
+    A.set_ips speak_arp [ Ipaddr.V4.of_string_exn "10.23.10.1" ] >>= fun speak_arp ->
+    A.set_ips speak_arp [ Ipaddr.V4.of_string_exn "10.50.20.22" ] >>= fun speak_arp ->
+    A.set_ips speak_arp [ Ipaddr.V4.of_string_exn "10.20.254.2" ] >>= fun speak_arp ->
+    A.set_ips speak_arp [ my_ip ] >>= fun speak_arp -> 
+    Lwt_unix.sleep 0.1 >>= fun () -> V.disconnect listen_netif >>= fun () ->
+    Lwt.return_unit
+  in
+  let listen_fn () = V.listen listen_netif (E.input ~arpv4:(A.input listen_arp) 
+      ~ipv4:(fun buf -> Lwt.return_unit) ~ipv6:(fun buf -> Lwt.return_unit)
+      listen_ethif)
+  in
+  Lwt.join [
+    multiple_ips ();(* since we need to get >1 packet, this is a
+                                 little more difficult; possibly we need to
+                                 actually register a real listener *)
+    listen_fn ()
+  ] >>= fun () ->
+  (* listen_config should have the ARP cache history reflecting the updates send
+     by speak_arp; a current read should show us my_ip *)
+  let store = Irmin.basic (module Irmin_backend) (module T) in
+  Irmin.create store listen_config Irmin_unix.task >>= fun store ->
+  Irmin.read_exn (store "readback of map") T.Path.empty >>= fun map ->
+  try
+    let open Irmin_arp.Entry in
+    match T.find my_ip map with 
+    | Confirmed (time, entry) -> OUnit.assert_equal entry (V.mac speak_netif);
+      Lwt.return_unit
+    | Pending _ -> OUnit.assert_failure "Pending entry for an entry that had a
+  GARP emitted on the same vnetif backend"
+  with
+    Not_found -> OUnit.assert_failure "Expected cache entry not found in
+    listener cache map, as read back from Irmin"
 
 let lwt_run f () = Lwt_main.run (f ())
 
