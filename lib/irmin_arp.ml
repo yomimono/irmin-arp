@@ -89,6 +89,10 @@ module Table(P: Irmin.Path.S) : sig
   include Irmin.Contents.S 
   val to_map : t -> Entry.t M.t
   val of_map : Entry.t M.t -> t
+  val add : Key.t -> Entry.t -> t -> t
+  val remove : Key.t -> t -> t
+  val find : Key.t -> t -> Entry.t
+  val empty : t
 
   module Ops : sig
     include Tc.S0 with type t = Entry.t M.t (* map from ip -> entry *)
@@ -96,6 +100,13 @@ module Table(P: Irmin.Path.S) : sig
 end = struct
   module Path = P
   module M = Map.Make(Ipaddr.V4)
+
+  let to_map t = t
+  let of_map = to_map
+  let add = M.add
+  let remove = M.remove
+  let find = M.find
+  let empty = M.empty
 
   module Ops = struct
     type t = Entry.t M.t (* map from ip -> entry *)
@@ -149,9 +160,6 @@ end = struct
 
   include Ops
 
-  let to_map t = t
-  let of_map = to_map
-
   let merge _path ~(old : Entry.t M.t Irmin.Merge.promise) t1 t2 = 
     let open Irmin.Merge.OP in
     old () >>| fun old -> 
@@ -191,7 +199,10 @@ end
 
 module Arp = struct
   (* much cribbed from mirage-tcpip/lib/arpv4.ml *)
-  module Make (Ethif : V1_LWT.ETHIF) = struct
+  module Make (Ethif : V1_LWT.ETHIF) (Clock: V1.CLOCK) (Maker : Irmin.S_MAKER)
+  = struct
+    module T = Table (Irmin.Path.String_list)
+    module I = Irmin.Basic (Maker) (T)
     type arp = {
       op: [ `Request |`Reply |`Unknown of int ];
       sha: Macaddr.t;
@@ -202,26 +213,37 @@ module Arp = struct
 
     type t = { 
       ethif: Ethif.t;
-      ips: Ipaddr.V4.t list;
+      bound_ips: Ipaddr.V4.t list;
+      cache: cache
     } 
+    let arp_timeout = 60. (* age entries out of cache after this many seconds *)
+    let probe_repeat_delay = 1.5 (* per rfc5227, 2s >= probe_repeat_delay >= 1s *)
+    let probe_num = 3 (* how many probes to send before giving up *)
 
     let is_garp ip buf = true
 
-    let arp_of_cstruct buf = None
-    let cstruct_of_arp query = None
-
-    let create ethif = { ethif; ips = [] }
+    let create ethif config = 
+      let open Lwt in
+      let store = Irmin.basic (module Maker) (module T) in
+      (* currently the only impl of task is Irmin_unix.task; we could write our
+         own, I guess *)
+      let task str = 
+        Irmin.Task.create ~date:(Int64.of_float (Clock.time ())) ~owner:"seal" str in
+      Irmin.create store config task >>= fun cache ->
+      Irmin.update (cache "Initial empty cache") T.Path.empty T.empty 
+      >>= fun () ->
+      Lwt.return ({ ethif; bound_ips = []; cache; })
     let add_ip t ip = 
-      match List.mem ip (t.ips) with
+      match List.mem ip (t.bound_ips) with
       | true -> Lwt.return t
-      | false -> Lwt.return { t with ips = (ip :: t.ips)}
+      | false -> Lwt.return { t with bound_ips = (ip :: t.bound_ips)}
     let remove_ip t ip =
-      match List.mem ip (t.ips) with
+      match List.mem ip (t.bound_ips) with
       | false -> Lwt.return t
       | true -> 
         let is_not_ip other_ip = ((Ipaddr.V4.compare ip other_ip) <> 0) in
-        Lwt.return { t with ips = (List.filter is_not_ip t.ips) }
-    let get_ips t = t.ips
+        Lwt.return { t with bound_ips = (List.filter is_not_ip t.bound_ips) }
+    let get_ips t = t.bound_ips
 
     (* construct an arp record representing a gratuitious arp announcement for
        ip *)
@@ -232,6 +254,33 @@ module Arp = struct
         tpa = Ipaddr.V4.any;
         spa = ip;
       }
+
+    let notify t ip mac =
+      let open Lwt in 
+      let now = Clock.time () in
+      let expire = now +. arp_timeout in
+      try
+        Irmin.read_exn (t.cache "lookup") T.Path.empty 
+        >>= fun table ->
+        match T.find ip table with
+        | Pending (_, w) ->
+          let updated = T.add ip (Confirmed (expire, mac)) table in
+          Irmin.update (t.cache "entry resolved") T.Path.empty updated >>= fun
+            () ->
+          Lwt.wakeup w (`Ok mac);
+          Lwt.return_unit
+        | Confirmed _ ->
+          let updated = T.add ip (Confirmed (expire, mac)) table in
+          Irmin.update (t.cache "entry updated") T.Path.empty updated >>= fun
+            () ->
+          Lwt.return_unit
+      with
+      | Not_found ->
+        Irmin.read_exn (t.cache "lookup") T.Path.empty >>= fun table ->
+        let updated = T.add ip (Confirmed (expire, mac)) table in
+        Irmin.update (t.cache "entry added") T.Path.empty updated >>= fun
+          () ->
+        Lwt.return_unit
 
     (* output taken directly from arpv4.ml *)
     let output t arp =
@@ -266,11 +315,42 @@ module Arp = struct
       let buf = Cstruct.sub buf 0 sizeof_arp in
       Ethif.write t.ethif buf
 
+    let rec input t frame =
+      let open Lwt in
+    let open Wire_structs.Arpv4_wire in
+    MProf.Trace.label "arpv4.input";
+    match get_arp_op frame with
+    |1 -> (* Request *)
+      (* Received ARP request, check if we can satisfy it from
+         our own IPv4 list *)
+      let req_ipv4 = Ipaddr.V4.of_int32 (get_arp_tpa frame) in
+      (* printf "ARP: who-has %s?\n%!" (Ipaddr.V4.to_string req_ipv4); *)
+      if List.mem req_ipv4 t.bound_ips then begin
+        Printf.printf "ARP responding to: who-has %s?\n%!" (Ipaddr.V4.to_string req_ipv4);
+        (* We own this IP, so reply with our MAC *)
+        let sha = Ethif.mac t.ethif in
+        let tha = Macaddr.of_bytes_exn (copy_arp_sha frame) in
+        let spa = Ipaddr.V4.of_int32 (get_arp_tpa frame) in (* the requested address *)
+        let tpa = Ipaddr.V4.of_int32 (get_arp_spa frame) in (* the requesting host IPv4 *)
+        output t { op=`Reply; sha; tha; spa; tpa }
+      end else Lwt.return_unit
+    |2 -> (* Reply *)
+      let spa = Ipaddr.V4.of_int32 (get_arp_spa frame) in
+      let sha = Macaddr.of_bytes_exn (copy_arp_sha frame) in
+      Printf.printf "ARP: updating %s -> %s\n%!"
+        (Ipaddr.V4.to_string spa) (Macaddr.to_string sha);
+      (* If we have pending entry, notify the waiters that answer is ready *)
+      notify t spa sha;
+      return_unit
+    |n ->
+      Printf.printf "ARP: Unknown message %d ignored\n%!" n;
+      return_unit
+
     let set_ips t ips = 
       (* it would be nice if there were some provision for "uh you really don't
          want to do that, that IP is in the cache already" *)
-      List.map (fun ip -> output t (garp t ip)) ips;
-      Lwt.return { t with ips = ips }
+      Lwt.join (List.map (fun ip -> output t (garp t ip)) ips) >>= fun () ->
+      Lwt.return { t with bound_ips = ips }
   end
 
 end
