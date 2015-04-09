@@ -230,7 +230,7 @@ module Arp = struct
       let task str = 
         Irmin.Task.create ~date:(Int64.of_float (Clock.time ())) ~owner:"seal" str in
       Irmin.create store config task >>= fun cache ->
-      Irmin.update (cache "Initial empty cache") T.Path.empty T.empty 
+      Irmin.update (cache "Arp.create: Initial empty cache") T.Path.empty T.empty 
       >>= fun () ->
       Lwt.return ({ ethif; bound_ips = []; cache; })
     let add_ip t ip = 
@@ -257,6 +257,7 @@ module Arp = struct
 
     let notify t ip mac =
       let open Lwt in 
+      let open Entry in
       let now = Clock.time () in
       let expire = now +. arp_timeout in
       try
@@ -318,7 +319,8 @@ module Arp = struct
     let rec input t frame =
       let open Lwt in
     let open Wire_structs.Arpv4_wire in
-    MProf.Trace.label "arpv4.input";
+      MProf.Trace.label "arpv4.input";
+      Printf.printf "okay, inputting frame...\n";
     match get_arp_op frame with
     |1 -> (* Request *)
       (* Received ARP request, check if we can satisfy it from
@@ -340,8 +342,7 @@ module Arp = struct
       Printf.printf "ARP: updating %s -> %s\n%!"
         (Ipaddr.V4.to_string spa) (Macaddr.to_string sha);
       (* If we have pending entry, notify the waiters that answer is ready *)
-      notify t spa sha;
-      return_unit
+      notify t spa sha
     |n ->
       Printf.printf "ARP: Unknown message %d ignored\n%!" n;
       return_unit
