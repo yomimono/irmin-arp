@@ -8,16 +8,18 @@ module Irmin_backend = Irmin_unix.Irmin_git.FS
 module I = Irmin.Basic(Irmin_backend)(T)
 module A = Irmin_arp.Arp.Make(E)(Clock)(Irmin_backend)
 
+let root = "test_results"
+
 let or_error name fn t =
   fn t >>= function
   | `Error e -> OUnit.assert_failure ("Error starting " ^ name)
   | `Ok t -> return t
 
-let get_arp () =
+let get_arp ~root () =
   let backend = B.create () in
   or_error "backend" V.connect backend >>= fun netif ->
   or_error "ethif" E.connect netif >>= fun ethif ->
-  let config = Irmin_storer.config ~root:"arp_test_results" () in
+  let config = Irmin_storer.config ~root () in
   A.create ethif config >>= fun a ->
   Lwt.return (backend, a)
 
@@ -27,7 +29,7 @@ let create_returns () =
   (* Arp.create returns something bearing resemblance to an Arp.t *)
   (* possibly assert some qualities of a freshly-created ARP interface -- e.g.
      no bound IPs, empty cache, etc *)
-  get_arp () >>= fun (_, a) ->
+  get_arp ~root:(root ^ "/create_returns") () >>= fun (_, a) ->
   OUnit.assert_equal [] (A.get_ips a);
   Lwt.return_unit
 
@@ -50,7 +52,7 @@ let timeout_or (backend, a) do_fn listen_fn =
   ]
 
 let set_ips () =
-  get_arp () >>= fun (backend, a) ->
+  get_arp ~root:(root ^ "set_ips") () >>= fun (backend, a) ->
   (* set up a listener that will return when it hears a GARP *)
   or_error "backend" V.connect backend >>= fun listen_netif ->
 (* TODO: according to the contract in arpv4.mli, add_ip, set_ip, and remove_ip
@@ -78,7 +80,7 @@ let set_ips () =
   Lwt.return_unit
 
 let get_remove_ips () =
-  get_arp () >>= fun (backend, a) ->
+  get_arp ~root:(root ^ "remove_ips") () >>= fun (backend, a) ->
   OUnit.assert_equal [] (A.get_ips a);
   A.set_ips a [ my_ip; my_ip ] >>= fun a ->
   let ips = A.get_ips a in
@@ -91,10 +93,11 @@ let get_remove_ips () =
   OUnit.assert_equal [] (A.get_ips a);
   Lwt.return_unit
 
-let input () =
+let input_single_reply () =
   (* use on-disk git fs for cache so we can read it back and check it ourselves *)
-  let listen_config = Irmin_storer.config ~root:"arp_test_results/listener" () in
-  let speak_config = Irmin_storer.config ~root:"arp_test_results/speaker" () in
+  let root = root ^ "/input_single_reply" in
+  let listen_config = Irmin_storer.config ~root:(root ^ "/listener") () in
+  let speak_config = Irmin_storer.config ~root:(root ^ "/speaker") () in
   let backend = B.create () in
   or_error "backend" V.connect backend >>= fun speak_netif ->
   or_error "ethif" E.connect speak_netif >>= fun speak_ethif ->
@@ -109,7 +112,6 @@ let input () =
     (Lwt.pick [
       V.listen listen_netif 
         (fun buf -> 
-           Printf.printf "cool buffer!!\n"; 
            A.input listen_arp buf >>= fun () -> V.disconnect listen_netif
         );
       Lwt_unix.sleep 0.1 >>= fun () -> 
@@ -131,6 +133,8 @@ let input () =
     Not_found -> OUnit.assert_failure "Expected cache entry not found in
     listener cache map, as read back from Irmin"
 
+let input_changed_ip () = Lwt.return_unit
+
 let lwt_run f () = Lwt_main.run (f ())
 
 let () =
@@ -143,7 +147,8 @@ let () =
     (* TODO: test pending resolution and timeouts *)
   ] in
   let input = [
-    "input", `Slow, lwt_run input
+    "input_single_reply", `Slow, lwt_run input_single_reply;
+    "input_changed_ip", `Slow, lwt_run input_changed_ip ;
   ] in
   let create : Alcotest.test_case list = [
     "create_returns", `Slow, lwt_run create_returns ;
