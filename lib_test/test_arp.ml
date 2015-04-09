@@ -92,6 +92,7 @@ let get_remove_ips () =
   Lwt.return_unit
 
 let input () =
+<<<<<<< HEAD
   (* use on-disk git fs for cache so we can read it back and check it ourselves *)
   let listen_config = Irmin_storer.config ~root:"arp_test_results/listener" () in
   let speak_config = Irmin_storer.config ~root:"arp_test_results/speaker" () in

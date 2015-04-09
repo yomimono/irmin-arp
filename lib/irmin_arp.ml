@@ -320,7 +320,6 @@ module Arp = struct
       let open Lwt in
     let open Wire_structs.Arpv4_wire in
       MProf.Trace.label "arpv4.input";
-      Printf.printf "okay, inputting frame...\n";
     match get_arp_op frame with
     |1 -> (* Request *)
       (* Received ARP request, check if we can satisfy it from
