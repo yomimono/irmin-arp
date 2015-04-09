@@ -1,5 +1,6 @@
 _build/
 _tests/
+test_results/
 arp_test_results/
 irmin_test/
 lib/.irmin_arp.ml.swp
