@@ -1,0 +1,12 @@
+# OASIS_START
+# DO NOT EDIT (digest: e822ad638c4f4cb415adedc940405656)
+version = "0.0.1"
+description = "you know what arp caches need?  dvcs."
+requires = "irmin lwt ipaddr tcpip tcpip.ipv4 ezjsonm mirage-types"
+archive(byte) = "irmin_arp.cma"
+archive(byte, plugin) = "irmin_arp.cma"
+archive(native) = "irmin_arp.cmxa"
+archive(native, plugin) = "irmin_arp.cmxs"
+exists_if = "irmin_arp.cma"
+# OASIS_STOP
+
