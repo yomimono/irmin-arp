@@ -131,7 +131,7 @@ let merge_conflicts_solved _ctx =
     node >>= fun () ->
   Lwt.return_unit
 
-let check_map_contents map =
+let check_map_contents ~serialization map =
   assert_resolves map ip1 (confirm time3 mac1);
   assert_resolves map ip2 (confirm time2 mac2);
   if check_serialization then 
