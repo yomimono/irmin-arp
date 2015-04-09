@@ -166,7 +166,7 @@ let complex_merge_remove_then_update _ctx =
   Irmin.merge_exn "remove_expired -> master" expire_branch ~into:t >>= fun () ->
   Irmin.merge_exn "update_entries -> master" update_branch ~into:t >>= fun () ->
   Irmin.read_exn (t "final readback") node >>= fun map ->
-  check_map_contents (T.to_map map);
+  check_map_contents ~serialization:false (T.to_map map);
   Lwt.return_unit
 
 let complex_merge_pairwise () =

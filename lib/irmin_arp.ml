@@ -267,21 +267,27 @@ module Arp = struct
         >>= fun table ->
         match T.find ip table with
         | Pending (_, w) ->
+          let str = "entry resolved: " ^ Ipaddr.V4.to_string ip ^ " -> " ^
+                    Macaddr.to_string mac in
           let updated = T.add ip (Confirmed (expire, mac)) table in
-          Irmin.update (t.cache "entry resolved") T.Path.empty updated >>= fun
+          Irmin.update (t.cache str) T.Path.empty updated >>= fun
             () ->
           Lwt.wakeup w (`Ok mac);
           Lwt.return_unit
         | Confirmed _ ->
+          let str = "entry updated: " ^ Ipaddr.V4.to_string ip ^ " -> " ^
+                    Macaddr.to_string mac in
           let updated = T.add ip (Confirmed (expire, mac)) table in
-          Irmin.update (t.cache "entry updated") T.Path.empty updated >>= fun
+          Irmin.update (t.cache str) T.Path.empty updated >>= fun
             () ->
           Lwt.return_unit
       with
       | Not_found ->
+        let str = "entry added: " ^ Ipaddr.V4.to_string ip ^ " -> " ^
+                  Macaddr.to_string mac in
         Irmin.read_exn (t.cache "lookup") T.Path.empty >>= fun table ->
         let updated = T.add ip (Confirmed (expire, mac)) table in
-        Irmin.update (t.cache "entry added") T.Path.empty updated >>= fun
+        Irmin.update (t.cache str) T.Path.empty updated >>= fun
           () ->
         Lwt.return_unit
 
