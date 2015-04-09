@@ -170,44 +170,26 @@ let complex_merge_remove_then_update _ctx =
   Lwt.return_unit
 
 let complex_merge_pairwise () =
-  (* make_on_disk ~root:disk_path ~bare:true () *) (* Hangs indefinitely... *)
-  make_in_memory () >>= fun t ->
-  let node = T.Path.empty in
+  let node = (test_node "merge_pairwise") in
   let original = T.of_map (sample_table ()) in
-  Irmin.update (t "original map") node original >>= fun () ->
-  Irmin.clone_force Irmin_unix.task (t "clone map") "update cache" >>= fun
+  make_on_disk ~root ~bare:false () >>= fun t ->
+  Irmin.update (t "merge_pairwise: original map") node original >>= fun () ->
+  Irmin.clone_force Irmin_unix.task (t "merge_pairwise: clone map") "update_cache" >>= fun
     update_branch ->
-  Irmin.clone_force Irmin_unix.task (t "clone map") "remove expired" >>= fun
+  Irmin.clone_force Irmin_unix.task (t "merge_pairwise: clone map") "remove_expired" >>= fun
     expire_branch ->
   (* update updated branch *)
   update_expired update_branch node >>= fun update_map ->
-  Irmin.update (update_branch "update expired") node (T.of_map update_map) >>=
+  Irmin.update (update_branch "merge_pairwise: update expired") node (T.of_map update_map) >>=
   fun () ->
   (* update removed branch *)
   remove_expired expire_branch node >>= fun expired_map ->
-  Irmin.update (expire_branch "remove expired") node (T.of_map expired_map) >>=
+  Irmin.update (expire_branch "merge_pairwise: remove expired") node (T.of_map expired_map) >>=
   fun () ->
-  Irmin.merge_exn "update_entries -> master" update_branch ~into:t >>= fun () ->
-  Irmin.merge_exn "remove_expired -> master" expire_branch ~into:t >>= fun () ->
-  Irmin.read_exn (t "final readback") node >>= fun map ->
-  check_map_contents (T.to_map map);
-  Lwt.return_unit
-
-let complex_merge_update_then_remove _ctx =
-  make_in_memory () >>= fun t ->
-  let node = T.Path.empty in
-  let original = T.of_map (sample_table ()) in
-  Irmin.update (t "original map") node original >>= fun () ->
-  clone_update t ~read_msg:"clone map" ~update_msg:"update cache"
-    ~branch_name:"update_entries" node update_expired
-  >>= fun update_branch ->
-  clone_update t ~read_msg:"clone map" ~update_msg:"remove sample_table entries"
-    ~branch_name:"remove_expired" node remove_expired
-  >>= fun expire_branch ->
-  Irmin.merge_exn "update_entries -> master" update_branch ~into:t >>= fun () ->
-  Irmin.merge_exn "remove_expired -> master" expire_branch ~into:t >>= fun () ->
-  Irmin.read_exn (t "final readback") node >>= fun map ->
-  check_map_contents (T.to_map map);
+  Irmin.merge_exn "merge_pairwise: update_entries -> master" update_branch ~into:t >>= fun () ->
+  Irmin.merge_exn "merge_pairwise: remove_expired -> master" expire_branch ~into:t >>= fun () ->
+  Irmin.read_exn (t "merge_pairwise: final readback") node >>= fun map ->
+  check_map_contents ~serialization:true (T.to_map map);
   Lwt.return_unit
 
 let lwt_run f () = Lwt_main.run (f ())
@@ -222,7 +204,6 @@ let () =
   let merge = [
     "merge w/divergent nodes", `Slow, lwt_run merge_conflicts_solved;
     "merge w/conflict; remove then update", `Slow, lwt_run complex_merge_remove_then_update;
-    "merge w/conflict; update then remove", `Slow, lwt_run complex_merge_update_then_remove;
     "merge w/conflict; both clones, both updates, both merges", `Slow, lwt_run
       complex_merge_pairwise;
   ] in
