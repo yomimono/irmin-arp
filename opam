@@ -1,0 +1,15 @@
+opam-version: "1.2"
+name: "irmin-arp"
+version: "0.0.1"
+maintainer: "Mindy Preston <meetup@yomimono.org>"
+authors: "Mindy Preston <meetup@yomimono.org>"
+homepage: ""
+bug-reports: ""
+license: ""
+build: [
+  ["./configure" "--prefix=%{prefix}%"]
+  [make]
+]
+install: [make "install"]
+remove: ["ocamlfind" "remove" "irmin-arp"]
+depends: "ocamlfind" {build}
