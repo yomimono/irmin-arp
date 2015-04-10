@@ -222,7 +222,33 @@ module Arp = struct
     let probe_repeat_delay = 1.5 (* per rfc5227, 2s >= probe_repeat_delay >= 1s *)
     let probe_num = 3 (* how many probes to send before giving up *)
 
-    let is_garp ip buf = true
+    let parse buf = 
+      let open Wire_structs in
+      if Cstruct.len buf < Arpv4_wire.sizeof_arp then `Too_short else
+        begin
+          let op = match Arpv4_wire.get_arp_op buf with
+            | 1 -> `Request
+            | 2 -> `Reply
+            | n -> `Unknown n
+          in
+          let src_mac = Arpv4_wire.copy_arp_sha buf in
+          let target_mac = Arpv4_wire.copy_arp_tha buf in
+          match (Macaddr.of_bytes src_mac, Macaddr.of_bytes target_mac) with
+          | None, Some _ -> `Bad_mac [ src_mac ]
+          | Some _, None -> `Bad_mac [ target_mac ]
+          | None, None -> `Bad_mac [ src_mac ; target_mac ]
+          | Some src_mac, Some target_mac ->
+            let src_ip = Ipaddr.V4.of_int32 (Arpv4_wire.get_arp_spa buf) in
+            let target_ip = Ipaddr.V4.of_int32 (Arpv4_wire.get_arp_tpa buf) in
+            `Ok { op; 
+                  sha = src_mac; spa = src_ip; 
+                  tha = target_mac; tpa = target_ip
+                }
+        end
+
+    let is_garp ip buf = match parse buf with
+      | `Ok arp -> arp.op = `Reply && arp.tha = Macaddr.broadcast
+      | _ -> false
 
     let create ethif config = 
       let open Lwt in
@@ -295,8 +321,10 @@ module Arp = struct
     let output t arp =
       let open Wire_structs.Arpv4_wire in
       (* Obtain a buffer to write into *)
-      let buf = Cstruct.create (Wire_structs.Arpv4_wire.sizeof_arp +
-                                Wire_structs.sizeof_ethernet) in
+      (* note that sizeof_arp includes sizeof_ethernet by what's currently in
+         wire_structs.ml *)
+      let buf = Cstruct.create (Wire_structs.Arpv4_wire.sizeof_arp) in
+                                
       (* Write the ARP packet *)
       let dmac = Macaddr.to_bytes arp.tha in
       let smac = Macaddr.to_bytes arp.sha in

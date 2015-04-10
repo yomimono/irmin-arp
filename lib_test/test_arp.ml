@@ -62,14 +62,18 @@ let set_ips () =
     Lwt.return_unit
   in
   let listen_fn () =
-    (fun buf -> match A.is_garp my_ip buf with 
-       | false -> OUnit.assert_failure "something non-GARP sent after set_ips" 
+    (fun buf -> match A.is_garp my_ip buf with
        | true -> V.disconnect listen_netif
+       | false ->
+         match A.parse buf with
+         | `Ok arp -> OUnit.assert_failure "something ARP but non-GARP sent after set_ips"
+         | `Bad_mac _ -> OUnit.assert_failure "couldn't parse a MAC out of something set_ips sent"
+         | `Too_short -> OUnit.assert_failure "got a short packet after set_ips"
     )
   in
-  timeout_or ~timeout:0.1 ~msg:"100ms timeout exceeded before listen_fn returned" 
-    listen_netif do_fn listen_fn >>= fun () -> 
-  A.set_ips a [] >>= fun a -> 
+  timeout_or ~timeout:0.1 ~msg:"100ms timeout exceeded before listen_fn returned"
+    listen_netif do_fn listen_fn >>= fun () ->
+  A.set_ips a [] >>= fun a ->
   OUnit.assert_equal [] (A.get_ips a);
   A.set_ips a [ my_ip; Ipaddr.V4.of_string_exn "10.20.1.1" ] >>= fun a ->
   OUnit.assert_equal [ my_ip; Ipaddr.V4.of_string_exn "10.20.1.1" ] (A.get_ips
@@ -105,8 +109,8 @@ let input_single_reply () =
   (* send a GARP from one side (speak_arp) and make sure it was heard on the
      other *)
   timeout_or ~timeout:0.1 ~msg:"Nothing received by listen_netif when trying to
-  do single reply test" 
-    listen_netif (fun () -> A.set_ips speak_arp [ my_ip ] >>= fun _a -> Lwt.return_unit) 
+  do single reply test"
+    listen_netif (fun () -> A.set_ips speak_arp [ my_ip ] >>= fun _a -> Lwt.return_unit)
     (fun () -> fun buf -> A.input listen_arp buf >>= fun () -> V.disconnect listen_netif)
   >>= fun () ->
   (* load our own representation of the ARP cache of the listener *)
@@ -115,7 +119,7 @@ let input_single_reply () =
   Irmin.read_exn (store "readback of map") T.Path.empty >>= fun map ->
   try
     let open Irmin_arp.Entry in
-    match T.find my_ip map with 
+    match T.find my_ip map with
     | Confirmed (time, entry) -> OUnit.assert_equal entry (V.mac speak_netif);
       Lwt.return_unit
     | Pending _ -> OUnit.assert_failure "Pending entry for an entry that had a
@@ -124,7 +128,7 @@ let input_single_reply () =
     Not_found -> OUnit.assert_failure "Expected cache entry not found in
     listener cache map, as read back from Irmin"
 
-let input_changed_ip () = 
+let input_changed_ip () =
   let root = root ^ "/input_changed_ip" in
   let listen_config = Irmin_storer.config ~root:(root ^ "/listener") () in
   let speak_config = Irmin_storer.config ~root:(root ^ "/speaker") () in
@@ -139,11 +143,11 @@ let input_changed_ip () =
     A.set_ips speak_arp [ Ipaddr.V4.of_string_exn "10.23.10.1" ] >>= fun speak_arp ->
     A.set_ips speak_arp [ Ipaddr.V4.of_string_exn "10.50.20.22" ] >>= fun speak_arp ->
     A.set_ips speak_arp [ Ipaddr.V4.of_string_exn "10.20.254.2" ] >>= fun speak_arp ->
-    A.set_ips speak_arp [ my_ip ] >>= fun speak_arp -> 
+    A.set_ips speak_arp [ my_ip ] >>= fun speak_arp ->
     Lwt_unix.sleep 0.1 >>= fun () -> V.disconnect listen_netif >>= fun () ->
     Lwt.return_unit
   in
-  let listen_fn () = V.listen listen_netif (E.input ~arpv4:(A.input listen_arp) 
+  let listen_fn () = V.listen listen_netif (E.input ~arpv4:(A.input listen_arp)
       ~ipv4:(fun buf -> Lwt.return_unit) ~ipv6:(fun buf -> Lwt.return_unit)
       listen_ethif)
   in
@@ -160,7 +164,7 @@ let input_changed_ip () =
   Irmin.read_exn (store "readback of map") T.Path.empty >>= fun map ->
   try
     let open Irmin_arp.Entry in
-    match T.find my_ip map with 
+    match T.find my_ip map with
     | Confirmed (time, entry) -> OUnit.assert_equal entry (V.mac speak_netif);
       Lwt.return_unit
     | Pending _ -> OUnit.assert_failure "Pending entry for an entry that had a
