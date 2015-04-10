@@ -362,16 +362,20 @@ module Arp = struct
         | `Request ->
           (* Received ARP request, check if we can satisfy it from
              our own IPv4 list *)
-          if List.mem arp.tpa t.bound_ips then begin
-            let sha = Ethif.mac t.ethif in
-            output t { op=`Reply; sha; tha = arp.sha; 
-                       (* just switch src and dst for reply *)
-                       spa = arp.tpa; tpa = arp.spa }
-          end else Lwt.return_unit
+          if List.mem arp.tpa t.bound_ips then 
+            output t 
+              { op=`Reply; 
+                sha = Ethif.mac t.ethif; tha = arp.sha; 
+                (* just switch src and dst ips for reply *)
+                spa = arp.tpa; tpa = arp.spa 
+              }
+          else Lwt.return_unit
         | `Reply ->
           (* If we have pending entry, notify the waiters that answer is ready *)
           notify t arp.spa arp.sha
-        | n -> Lwt.return_unit
+        | n -> (* we don't know what to do for any other request type, so take
+                  no action, effectively discarding the packet *)
+          Lwt.return_unit
 
     let set_ips t ips = 
       let open Lwt in
