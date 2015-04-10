@@ -173,12 +173,74 @@ let input_changed_ip () =
     Not_found -> OUnit.assert_failure "Expected cache entry not found in
     listener cache map, as read back from Irmin"
 
+let input_garbage () =
+  let root = root ^ "/input_garbage" in
+  let backend = B.create () in
+  let listen_config = Irmin_storer.config ~root () in
+  or_error "backend" V.connect backend >>= fun speak_netif ->
+  or_error "backend" V.connect backend >>= fun listen_netif ->
+  or_error "ethif" E.connect listen_netif >>= fun listen_ethif ->
+  A.create listen_ethif listen_config >>= fun listen_arp ->
+  let listen_fn () = V.listen listen_netif (E.input ~arpv4:(A.input listen_arp)
+      ~ipv4:(fun buf -> Lwt.return_unit) ~ipv6:(fun buf -> Lwt.return_unit)
+      listen_ethif)
+  in
+  (* TODO: this is a good candidate for a property test -- `parse` on an arbitrary
+     buffer of size less than k always returns `Too_short *)
+  let send_buf_sleep_then_dc buf () = 
+    V.write speak_netif buf >>= fun () ->
+    Lwt_unix.sleep 0.1 >>= fun () ->
+    V.disconnect listen_netif
+  in
+  Lwt.join [ listen_fn (); send_buf_sleep_then_dc (Cstruct.create 0) () ] 
+  >>= fun () ->
+  (* shouldn't be anything in the cache as a result of that nonsense *)
+  let store = Irmin.basic (module Irmin_backend) (module T) in
+  Irmin.create store listen_config Irmin_unix.task >>= fun store ->
+  Irmin.read_exn (store "readback of map") T.Path.empty >>= fun map ->
+  OUnit.assert_equal T.empty map;
+  Lwt.return_unit
+
+(* parse responds as expected to nonsense, non-arp buffers *)
+(* TODO: this test feels out of place here; I think this yet another
+   manifestation of needing a central place/system for parsing arbitrary network
+   nonsense according to spec *)
+let parse_garbage () =
+  (* make sure we do the right thing with unusual htype, ptype, hlen, plen *)
+  (* not sure what the right thing is, but look it up and do that *)
+  let check_arp ~op ~src_mac ~dst_mac ~src_ip ~dst_ip (arp : A.arp) =
+    OUnit.assert_equal arp 
+      { op; sha = src_mac; spa = src_ip; tha = dst_mac; tpa = dst_ip }
+  in
+  OUnit.assert_equal `Too_short (A.parse (Cstruct.create 0));
+  OUnit.assert_equal `Too_short 
+    (A.parse (Cstruct.create (Wire_structs.Arpv4_wire.sizeof_arp - 1)));
+  (* I think we actually can't trigger `Bad_mac, since the only condition that
+     causes that in the underlying Macaddr implementation is being provided a
+     string of insufficient size, which we guard against with `Too_short, ergo
+     no test to make sure we return `Bad_mac *)
+  let all_zero = Cstruct.create (Wire_structs.Arpv4_wire.sizeof_arp) in
+  match A.parse all_zero with
+  | `Too_short -> OUnit.assert_failure 
+    "Arp.parse claimed that an appropriate-length zero'd buffer was too short"
+  | `Bad_mac l -> let mac_strs = Printf.sprintf "%S" (String.concat ", " l) in
+    OUnit.assert_failure ("Arp.parse claimed these were bad MACs: " ^ mac_strs)
+  | `Ok all_zero -> 
+    let zero_mac = Macaddr.of_string_exn "00:00:00:00:00:00" in
+    let zero_ip = Ipaddr.V4.of_string_exn "0.0.0.0" in
+    check_arp ~op:(`Unknown 0) ~src_mac:zero_mac ~dst_mac:zero_mac ~src_ip:zero_ip
+      ~dst_ip:zero_ip
+
+
 let lwt_run f () = Lwt_main.run (f ())
 
 let () =
   let ip_crud = [
     "set_ips", `Slow, lwt_run set_ips;
     "get_remove_ips", `Slow, lwt_run get_remove_ips;
+  ] in
+  let parse = [
+    "parse_garbage", `Slow, parse_garbage ;
   ] in
   let query = [
     (* TODO: test query output *)
@@ -187,6 +249,7 @@ let () =
   let input = [
     "input_single_reply", `Slow, lwt_run input_single_reply;
     "input_changed_ip", `Slow, lwt_run input_changed_ip ;
+    "input_garbage", `Slow, lwt_run input_garbage
   ] in
   let create : Alcotest.test_case list = [
     "create_returns", `Slow, lwt_run create_returns ;
