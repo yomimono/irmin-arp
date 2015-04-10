@@ -353,34 +353,25 @@ module Arp = struct
       Ethif.write t.ethif buf
 
     let rec input t frame =
-      let open Lwt in
-    let open Wire_structs.Arpv4_wire in
+      let open Wire_structs.Arpv4_wire in
       MProf.Trace.label "arpv4.input";
-    match get_arp_op frame with
-    |1 -> (* Request *)
-      (* Received ARP request, check if we can satisfy it from
-         our own IPv4 list *)
-      let req_ipv4 = Ipaddr.V4.of_int32 (get_arp_tpa frame) in
-      (* printf "ARP: who-has %s?\n%!" (Ipaddr.V4.to_string req_ipv4); *)
-      if List.mem req_ipv4 t.bound_ips then begin
-        Printf.printf "ARP responding to: who-has %s?\n%!" (Ipaddr.V4.to_string req_ipv4);
-        (* We own this IP, so reply with our MAC *)
-        let sha = Ethif.mac t.ethif in
-        let tha = Macaddr.of_bytes_exn (copy_arp_sha frame) in
-        let spa = Ipaddr.V4.of_int32 (get_arp_tpa frame) in (* the requested address *)
-        let tpa = Ipaddr.V4.of_int32 (get_arp_spa frame) in (* the requesting host IPv4 *)
-        output t { op=`Reply; sha; tha; spa; tpa }
-      end else Lwt.return_unit
-    |2 -> (* Reply *)
-      let spa = Ipaddr.V4.of_int32 (get_arp_spa frame) in
-      let sha = Macaddr.of_bytes_exn (copy_arp_sha frame) in
-      Printf.printf "ARP: updating %s -> %s\n%!"
-        (Ipaddr.V4.to_string spa) (Macaddr.to_string sha);
-      (* If we have pending entry, notify the waiters that answer is ready *)
-      notify t spa sha
-    |n ->
-      Printf.printf "ARP: Unknown message %d ignored\n%!" n;
-      return_unit
+      match parse frame with
+      | `Too_short | `Bad_mac _ -> Lwt.return_unit
+      | `Ok arp ->
+        match arp.op with
+        | `Request ->
+          (* Received ARP request, check if we can satisfy it from
+             our own IPv4 list *)
+          if List.mem arp.tpa t.bound_ips then begin
+            let sha = Ethif.mac t.ethif in
+            output t { op=`Reply; sha; tha = arp.sha; 
+                       (* just switch src and dst for reply *)
+                       spa = arp.tpa; tpa = arp.spa }
+          end else Lwt.return_unit
+        | `Reply ->
+          (* If we have pending entry, notify the waiters that answer is ready *)
+          notify t arp.spa arp.sha
+        | n -> Lwt.return_unit
 
     let set_ips t ips = 
       let open Lwt in
