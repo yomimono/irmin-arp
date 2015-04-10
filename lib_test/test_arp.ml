@@ -65,7 +65,7 @@ let set_ips () =
     (fun buf -> match A.is_garp my_ip buf with
        | true -> V.disconnect listen_netif
        | false ->
-         match A.parse buf with
+         match A.arp_of_cstruct buf with
          | `Ok arp -> OUnit.assert_failure "something ARP but non-GARP sent after set_ips"
          | `Bad_mac _ -> OUnit.assert_failure "couldn't parse a MAC out of something set_ips sent"
          | `Too_short -> OUnit.assert_failure "got a short packet after set_ips"
@@ -187,18 +187,24 @@ let input_garbage () =
   in
   (* TODO: this is a good candidate for a property test -- `parse` on an arbitrary
      buffer of size less than k always returns `Too_short *)
-  let send_buf_sleep_then_dc buf () = 
-    V.write speak_netif buf >>= fun () ->
+  let send_buf_sleep_then_dc bufs () = 
+    Lwt.join (List.map (V.write speak_netif) bufs) >>= fun () ->
     Lwt_unix.sleep 0.1 >>= fun () ->
     V.disconnect listen_netif
   in
-  Lwt.join [ listen_fn (); send_buf_sleep_then_dc (Cstruct.create 0) () ] 
+
+  Lwt.join [ listen_fn (); send_buf_sleep_then_dc [(Cstruct.create 0)] () ] 
   >>= fun () ->
   (* shouldn't be anything in the cache as a result of that nonsense *)
   let store = Irmin.basic (module Irmin_backend) (module T) in
   Irmin.create store listen_config Irmin_unix.task >>= fun store ->
   Irmin.read_exn (store "readback of map") T.Path.empty >>= fun map ->
   OUnit.assert_equal T.empty map;
+  (* don't store cache entries for broadcast either, even if someone claims it
+  *)
+  (* don't believe someone else if they claim our IP *)
+  (* don't set entries for non-unicast MACs (check and make sure this is the
+     right behavior) *)
   Lwt.return_unit
 
 (* parse responds as expected to nonsense, non-arp buffers *)
@@ -206,21 +212,21 @@ let input_garbage () =
    manifestation of needing a central place/system for parsing arbitrary network
    nonsense according to spec *)
 let parse_garbage () =
-  (* make sure we do the right thing with unusual htype, ptype, hlen, plen *)
+  (* TODO: make sure we do the right thing with unusual htype, ptype, hlen, plen *)
   (* not sure what the right thing is, but look it up and do that *)
   let check_arp ~op ~src_mac ~dst_mac ~src_ip ~dst_ip (arp : A.arp) =
     OUnit.assert_equal arp 
       { op; sha = src_mac; spa = src_ip; tha = dst_mac; tpa = dst_ip }
   in
-  OUnit.assert_equal `Too_short (A.parse (Cstruct.create 0));
+  OUnit.assert_equal `Too_short (A.arp_of_cstruct (Cstruct.create 0));
   OUnit.assert_equal `Too_short 
-    (A.parse (Cstruct.create (Wire_structs.Arpv4_wire.sizeof_arp - 1)));
+    (A.arp_of_cstruct (Cstruct.create (Wire_structs.Arpv4_wire.sizeof_arp - 1)));
   (* I think we actually can't trigger `Bad_mac, since the only condition that
      causes that in the underlying Macaddr implementation is being provided a
      string of insufficient size, which we guard against with `Too_short, ergo
      no test to make sure we return `Bad_mac *)
   let all_zero = Cstruct.create (Wire_structs.Arpv4_wire.sizeof_arp) in
-  match A.parse all_zero with
+  match A.arp_of_cstruct all_zero with
   | `Too_short -> OUnit.assert_failure 
     "Arp.parse claimed that an appropriate-length zero'd buffer was too short"
   | `Bad_mac l -> let mac_strs = Printf.sprintf "%S" (String.concat ", " l) in
@@ -229,8 +235,8 @@ let parse_garbage () =
     let zero_mac = Macaddr.of_string_exn "00:00:00:00:00:00" in
     let zero_ip = Ipaddr.V4.of_string_exn "0.0.0.0" in
     check_arp ~op:(`Unknown 0) ~src_mac:zero_mac ~dst_mac:zero_mac ~src_ip:zero_ip
-      ~dst_ip:zero_ip
-
+      ~dst_ip:zero_ip;
+    Lwt.return_unit
 
 let lwt_run f () = Lwt_main.run (f ())
 
@@ -240,7 +246,7 @@ let () =
     "get_remove_ips", `Slow, lwt_run get_remove_ips;
   ] in
   let parse = [
-    "parse_garbage", `Slow, parse_garbage ;
+    "parse_garbage", `Slow, lwt_run parse_garbage ;
   ] in
   let query = [
     (* TODO: test query output *)
@@ -257,6 +263,7 @@ let () =
   Alcotest.run "Irmin_arp.Arp" [
     "create", create;
     "ip_CRUD", ip_crud;
+    "parse", parse;
     "query", query;
     "input", input
   ]

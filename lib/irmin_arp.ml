@@ -222,7 +222,7 @@ module Arp = struct
     let probe_repeat_delay = 1.5 (* per rfc5227, 2s >= probe_repeat_delay >= 1s *)
     let probe_num = 3 (* how many probes to send before giving up *)
 
-    let parse buf = 
+    let arp_of_cstruct buf = 
       let open Wire_structs in
       if Cstruct.len buf < Arpv4_wire.sizeof_arp then `Too_short else
         begin
@@ -246,7 +246,7 @@ module Arp = struct
                 }
         end
 
-    let is_garp ip buf = match parse buf with
+    let is_garp ip buf = match arp_of_cstruct buf with
       | `Ok arp -> arp.op = `Reply && arp.tha = Macaddr.broadcast
       | _ -> false
 
@@ -317,8 +317,7 @@ module Arp = struct
           () ->
         Lwt.return_unit
 
-    (* output taken directly from arpv4.ml *)
-    let output t arp =
+    let cstruct_of_arp arp =
       let open Wire_structs.Arpv4_wire in
       (* Obtain a buffer to write into *)
       (* note that sizeof_arp includes sizeof_ethernet by what's currently in
@@ -348,14 +347,15 @@ module Arp = struct
       set_arp_spa buf spa;
       set_arp_tha dmac 0 buf;
       set_arp_tpa buf tpa;
-      (* Resize buffer to sizeof arp packet *)
-      let buf = Cstruct.sub buf 0 sizeof_arp in
-      Ethif.write t.ethif buf
+      buf
+
+    let output t arp =
+      Ethif.write t.ethif (cstruct_of_arp arp)
 
     let rec input t frame =
       let open Wire_structs.Arpv4_wire in
       MProf.Trace.label "arpv4.input";
-      match parse frame with
+      match arp_of_cstruct frame with
       | `Too_short | `Bad_mac _ -> Lwt.return_unit
       | `Ok arp ->
         match arp.op with
