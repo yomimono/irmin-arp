@@ -246,10 +246,24 @@ module Arp = struct
                 }
         end
 
+    let string_of_arp arp = 
+      let string_of_op = function
+        | `Request -> "Request"
+        | `Reply -> "Reply"
+        | `Unknown n -> Printf.sprintf "Unknown op: %d" n
+      in
+      Printf.sprintf "Op %s: %s, %s -> %s %s\n%!" 
+        (string_of_op arp.op)
+        (Macaddr.to_string arp.sha) (Ipaddr.V4.to_string arp.spa)
+        (Macaddr.to_string arp.tha) (Ipaddr.V4.to_string arp.tpa)
+
     let is_garp ip buf = match arp_of_cstruct buf with
       | `Ok arp -> arp.op = `Reply && arp.tha = Macaddr.broadcast
       | _ -> false
 
+    (* TODO: treatment of multicast ethernet address messages differs between
+       routers and end hosts; we have no way of knowing which we are without
+       taking a setup parameter. *)
     let create ethif config = 
       let open Lwt in
       let store = Irmin.basic (module Maker) (module T) in

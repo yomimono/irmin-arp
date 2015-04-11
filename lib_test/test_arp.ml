@@ -174,6 +174,7 @@ let input_changed_ip () =
     listener cache map, as read back from Irmin"
 
 let input_garbage () =
+  let open A in
   let root = root ^ "/input_garbage" in
   let backend = B.create () in
   let listen_config = Irmin_storer.config ~root () in
@@ -181,6 +182,7 @@ let input_garbage () =
   or_error "backend" V.connect backend >>= fun listen_netif ->
   or_error "ethif" E.connect listen_netif >>= fun listen_ethif ->
   A.create listen_ethif listen_config >>= fun listen_arp ->
+  A.set_ips listen_arp [ my_ip ] >>= fun listen_arp ->
   let listen_fn () = V.listen listen_netif (E.input ~arpv4:(A.input listen_arp)
       ~ipv4:(fun buf -> Lwt.return_unit) ~ipv6:(fun buf -> Lwt.return_unit)
       listen_ethif)
@@ -192,19 +194,31 @@ let input_garbage () =
     Lwt_unix.sleep 0.1 >>= fun () ->
     V.disconnect listen_netif
   in
-
-  Lwt.join [ listen_fn (); send_buf_sleep_then_dc [(Cstruct.create 0)] () ] 
+  let listener_mac = V.mac listen_netif in
+  let speaker_mac = V.mac speak_netif in
+  (* don't keep entries for unicast replies to someone else *)
+  let for_someone_else = A.cstruct_of_arp 
+      { op = `Reply; sha = listener_mac; tha = speaker_mac; spa = my_ip; 
+        tpa = Ipaddr.V4.of_string_exn "192.168.3.50" } in
+  (* don't store cache entries for broadcast either, even if someone claims it *)
+  let claiming_broadcast = A.cstruct_of_arp 
+      { op = `Reply; sha = Macaddr.broadcast; tha = listener_mac; spa = my_ip; 
+        tpa = Ipaddr.V4.of_string_exn "192.168.3.50" } in
+  (* TODO: don't set entries for non-unicast MACs if we're a router, but do if
+     we're a host (set via some parameter at creation time, presumably) *)
+  (* don't believe someone else if they claim one of our IPs *)
+  let claiming_ours = A.cstruct_of_arp 
+      { op = `Reply; sha = speaker_mac; tha = listener_mac; spa = my_ip; 
+        tpa = my_ip } in
+  Lwt.join [ listen_fn (); send_buf_sleep_then_dc 
+               [(Cstruct.create 0); for_someone_else;
+                claiming_broadcast; claiming_ours ] () ] 
   >>= fun () ->
-  (* shouldn't be anything in the cache as a result of that nonsense *)
+  (* shouldn't be anything in the cache as a result of all that nonsense *)
   let store = Irmin.basic (module Irmin_backend) (module T) in
   Irmin.create store listen_config Irmin_unix.task >>= fun store ->
   Irmin.read_exn (store "readback of map") T.Path.empty >>= fun map ->
   OUnit.assert_equal T.empty map;
-  (* don't store cache entries for broadcast either, even if someone claims it
-  *)
-  (* don't believe someone else if they claim our IP *)
-  (* don't set entries for non-unicast MACs (check and make sure this is the
-     right behavior) *)
   Lwt.return_unit
 
 (* parse responds as expected to nonsense, non-arp buffers *)
@@ -212,12 +226,9 @@ let input_garbage () =
    manifestation of needing a central place/system for parsing arbitrary network
    nonsense according to spec *)
 let parse_garbage () =
+  let open A in
   (* TODO: make sure we do the right thing with unusual htype, ptype, hlen, plen *)
   (* not sure what the right thing is, but look it up and do that *)
-  let check_arp ~op ~src_mac ~dst_mac ~src_ip ~dst_ip (arp : A.arp) =
-    OUnit.assert_equal arp 
-      { op; sha = src_mac; spa = src_ip; tha = dst_mac; tpa = dst_ip }
-  in
   OUnit.assert_equal `Too_short (A.arp_of_cstruct (Cstruct.create 0));
   OUnit.assert_equal `Too_short 
     (A.arp_of_cstruct (Cstruct.create (Wire_structs.Arpv4_wire.sizeof_arp - 1)));
@@ -225,7 +236,13 @@ let parse_garbage () =
      causes that in the underlying Macaddr implementation is being provided a
      string of insufficient size, which we guard against with `Too_short, ergo
      no test to make sure we return `Bad_mac *)
-  let all_zero = Cstruct.create (Wire_structs.Arpv4_wire.sizeof_arp) in
+  let zero_cstruct cs =                                                           
+    let zero c = Cstruct.set_char c 0 '\000' in                                   
+    let i = Cstruct.iter (fun c -> Some 1) zero cs in                             
+    Cstruct.fold (fun b a -> b) i cs     
+  in
+  let all_zero = zero_cstruct (Cstruct.create
+                                 (Wire_structs.Arpv4_wire.sizeof_arp)) in
   match A.arp_of_cstruct all_zero with
   | `Too_short -> OUnit.assert_failure 
     "Arp.parse claimed that an appropriate-length zero'd buffer was too short"
@@ -234,8 +251,9 @@ let parse_garbage () =
   | `Ok all_zero -> 
     let zero_mac = Macaddr.of_string_exn "00:00:00:00:00:00" in
     let zero_ip = Ipaddr.V4.of_string_exn "0.0.0.0" in
-    check_arp ~op:(`Unknown 0) ~src_mac:zero_mac ~dst_mac:zero_mac ~src_ip:zero_ip
-      ~dst_ip:zero_ip;
+    let zero_arp = { op=(`Unknown 0); sha=zero_mac; tha=zero_mac; spa=zero_ip;
+                     tpa=zero_ip} in
+    OUnit.assert_equal ~printer:A.string_of_arp zero_arp all_zero;
     Lwt.return_unit
 
 let lwt_run f () = Lwt_main.run (f ())
