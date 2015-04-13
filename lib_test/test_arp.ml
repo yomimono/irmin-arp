@@ -206,6 +206,8 @@ let input_garbage () =
         tpa = Ipaddr.V4.of_string_exn "192.168.3.50" } in
   (* TODO: don't set entries for non-unicast MACs if we're a router, but do if
      we're a host (set via some parameter at creation time, presumably) *)
+  (* TODO: another decent property test -- if op is something other than reply,
+     we never make a cache entry *)
   (* don't believe someone else if they claim one of our IPs *)
   let claiming_ours = A.cstruct_of_arp 
       { op = `Reply; sha = speaker_mac; tha = listener_mac; spa = my_ip; 
@@ -264,11 +266,17 @@ let () =
     "get_remove_ips", `Slow, lwt_run get_remove_ips;
   ] in
   let parse = [
-    "parse_garbage", `Slow, lwt_run parse_garbage ;
+    "parse_garbage", `Slow, lwt_run parse_garbage;
   ] in
   let query = [
-    (* TODO: test query output *)
-    (* TODO: test pending resolution and timeouts *)
+    (* 
+       tests from previous arp testing code:
+       arp probes are sent for entries not in the cache
+       once a response is received, query thread returns response immediately
+       probes are retried
+       gratuitious arps are recorded in the cache (done)
+       entries are aged out 
+    *)
   ] in
   let input = [
     "input_single_reply", `Slow, lwt_run input_single_reply;
