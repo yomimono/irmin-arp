@@ -15,13 +15,19 @@ let or_error name fn t =
   | `Error e -> OUnit.assert_failure ("Error starting " ^ name)
   | `Ok t -> return t
 
-let get_arp ~root () =
-  let backend = B.create () in
+let clear_cache config =
+  let store = Irmin.basic (module Irmin_backend) (module T) in
+  Irmin.create store config Irmin_unix.task >>= fun store ->
+  let node = T.Path.empty in
+  Irmin.remove (store "removing previous history for new test run") node 
+
+let get_arp ?(backend = B.create ()) ~root () =
   or_error "backend" V.connect backend >>= fun netif ->
   or_error "ethif" E.connect netif >>= fun ethif ->
   let config = Irmin_storer.config ~root () in
+  clear_cache config >>= fun () ->
   A.create ethif config >>= fun a ->
-  Lwt.return (backend, a)
+  Lwt.return (backend, netif, ethif, a)
 
 let my_ip = Ipaddr.V4.of_string_exn "192.168.3.1"
 
@@ -29,7 +35,7 @@ let create_returns () =
   (* Arp.create returns something bearing resemblance to an Arp.t *)
   (* possibly assert some qualities of a freshly-created ARP interface -- e.g.
      no bound IPs, empty cache, etc *)
-  get_arp ~root:(root ^ "/create_returns") () >>= fun (_, a) ->
+  get_arp ~root:(root ^ "/create_returns") () >>= fun (_, _, _, a) ->
   OUnit.assert_equal [] (A.get_ips a);
   Lwt.return_unit
 
@@ -50,7 +56,7 @@ let timeout_or ~timeout ~msg listen_netif do_fn listen_fn =
   ]
 
 let set_ips () =
-  get_arp ~root:(root ^ "/set_ips") () >>= fun (backend, a) ->
+  get_arp ~root:(root ^ "/set_ips") () >>= fun (backend, _, _, a) ->
   (* set up a listener that will return when it hears a GARP *)
   or_error "backend" V.connect backend >>= fun listen_netif ->
 (* TODO: according to the contract in arpv4.mli, add_ip, set_ip, and remove_ip
@@ -81,7 +87,7 @@ let set_ips () =
   Lwt.return_unit
 
 let get_remove_ips () =
-  get_arp ~root:(root ^ "/remove_ips") () >>= fun (backend, a) ->
+  get_arp ~root:(root ^ "/remove_ips") () >>= fun (backend, _, _, a) ->
   OUnit.assert_equal [] (A.get_ips a);
   A.set_ips a [ my_ip; my_ip ] >>= fun a ->
   let ips = A.get_ips a in
@@ -98,14 +104,11 @@ let input_single_reply () =
   (* use on-disk git fs for cache so we can read it back and check it ourselves *)
   let root = root ^ "/input_single_reply" in
   let listen_config = Irmin_storer.config ~root:(root ^ "/listener") () in
-  let speak_config = Irmin_storer.config ~root:(root ^ "/speaker") () in
   let backend = B.create () in
-  or_error "backend" V.connect backend >>= fun speak_netif ->
-  or_error "ethif" E.connect speak_netif >>= fun speak_ethif ->
-  A.create speak_ethif speak_config >>= fun speak_arp ->
-  or_error "backend" V.connect backend >>= fun listen_netif ->
-  or_error "ethif" E.connect listen_netif >>= fun listen_ethif ->
-  A.create listen_ethif listen_config >>= fun listen_arp ->
+  get_arp ~backend ~root:(root ^ "/listener") () >>= 
+  fun (backend, listen_netif, listen_ethif, listen_arp) ->
+  get_arp ~backend ~root:(root ^ "/speaker") () >>= 
+  fun (backend, speak_netif, speak_ethif, speak_arp) ->
   (* send a GARP from one side (speak_arp) and make sure it was heard on the
      other *)
   timeout_or ~timeout:0.1 ~msg:"Nothing received by listen_netif when trying to
@@ -120,7 +123,8 @@ let input_single_reply () =
   try
     let open Irmin_arp.Entry in
     match T.find my_ip map with
-    | Confirmed (time, entry) -> OUnit.assert_equal entry (V.mac speak_netif);
+    | Confirmed (time, entry) -> OUnit.assert_equal ~printer:Macaddr.to_string 
+                                   entry (V.mac speak_netif);
       Lwt.return_unit
     | Pending _ -> OUnit.assert_failure "Pending entry for an entry that had a
   GARP emitted on the same vnetif backend"
@@ -151,17 +155,13 @@ let input_changed_ip () =
       ~ipv4:(fun buf -> Lwt.return_unit) ~ipv6:(fun buf -> Lwt.return_unit)
       listen_ethif)
   in
-  Lwt.join [
-    multiple_ips ();(* since we need to get >1 packet, this is a
-                                 little more difficult; possibly we need to
-                                 actually register a real listener *)
-    listen_fn ()
-  ] >>= fun () ->
+  Lwt.join [ multiple_ips (); listen_fn () ] >>= fun () ->
   (* listen_config should have the ARP cache history reflecting the updates send
      by speak_arp; a current read should show us my_ip *)
   let store = Irmin.basic (module Irmin_backend) (module T) in
   Irmin.create store listen_config Irmin_unix.task >>= fun store ->
   Irmin.read_exn (store "readback of map") T.Path.empty >>= fun map ->
+  (* TODO: iterate over the commit history of IPs *)
   try
     let open Irmin_arp.Entry in
     match T.find my_ip map with
@@ -258,6 +258,8 @@ let parse_garbage () =
     OUnit.assert_equal ~printer:A.string_of_arp zero_arp all_zero;
     Lwt.return_unit
 
+let query_sent () = Lwt.return_unit
+
 let lwt_run f () = Lwt_main.run (f ())
 
 let () =
@@ -274,9 +276,9 @@ let () =
        arp probes are sent for entries not in the cache
        once a response is received, query thread returns response immediately
        probes are retried
-       gratuitious arps are recorded in the cache (done)
        entries are aged out 
     *)
+    "query_sent", `Slow, lwt_run query_sent;
   ] in
   let input = [
     "input_single_reply", `Slow, lwt_run input_single_reply;
