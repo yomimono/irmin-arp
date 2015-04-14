@@ -35,13 +35,21 @@ let second_ip = Ipaddr.V4.of_string_exn "192.168.3.10"
 let first_mac = Macaddr.of_string_exn "00:16:3e:00:11:00"
 let second_mac = Macaddr.of_string_exn "10:9a:dd:c0:ff:ee"
 
-let create_returns () =
+let create_is_consistent () =
   (* Arp.create returns something bearing resemblance to an Arp.t *)
   (* possibly assert some qualities of a freshly-created ARP interface -- e.g.
      no bound IPs, empty cache, etc *)
-  get_arp ~root:(root ^ "/create_returns") () >>= fun (_, _, _, a) ->
+  let root = root ^ "/create_is_consistent" in
+  get_arp ~root () >>= fun (_, _, _, a) ->
   OUnit.assert_equal [] (A.get_ips a);
-  Lwt.return_unit
+  (* cache should contain an empty map at T.Path.empty *)
+  let store = Irmin.basic (module Irmin_backend) (module T) in
+  let config = Irmin_storer.config ~root () in
+  Irmin.create store config Irmin_unix.task >>= fun cache ->
+  Irmin.read (cache "create_is_consistent checking for empty map") T.Path.empty >>=
+  function
+  | None -> OUnit.assert_failure "Expected location of the cache was empty"
+  | Some map -> OUnit.assert_equal T.empty map; Lwt.return_unit
 
 (* normally I'd test to make sure that we get the exception or error we expect
    if we feed `create` something nonsensible, but I don't see how to actually
@@ -283,16 +291,26 @@ let query_for_seeded_cache () =
   fun (backend, listen_netif, listen_ethif, listen_arp) ->
   let store = Irmin.basic (module Irmin_backend) (module T) in
   Irmin.create store speak_config Irmin_unix.task >>= fun store ->
-  Irmin.read_exn (store "readback of map") T.Path.empty >>= fun map ->
-  OUnit.assert_equal T.empty map;
-  let seeded = T.add second_ip (Entry.Confirmed ((Clock.time () +. 60.), second_mac)) map in
-  Irmin.update (store "query_for_seeded_cache: seed cache entry") T.Path.empty
-    seeded >>= fun () ->
-  (* OK, we've written an entry, so now calling query should not emit an ARP
-     query and should return before 1 retry interval *)
-  Lwt.join [
-
-  ]
+  Irmin.read (store "readback of map") T.Path.empty >>= function
+    | None -> OUnit.assert_failure "Couldn't read store from
+    query_for_seeded_map"
+    | Some map ->
+      OUnit.assert_equal T.empty map;
+      let seeded = T.add second_ip (Entry.Confirmed ((Clock.time () +. 60.), second_mac)) map in
+      Irmin.update (store "query_for_seeded_cache: seed cache entry") T.Path.empty
+        seeded >>= fun () ->
+      (* OK, we've written an entry, so now calling query should not emit an ARP
+         query and should return before 1 retry interval *)
+      Lwt.join [
+        V.listen listen_netif (fun buf -> OUnit.assert_failure "Listener heard a
+    packet, but speaker should've had a cache entry");
+        A.query speak_arp second_ip >>= function
+        | `Ok mac when mac = second_mac -> (* yay! *) Lwt.return_unit
+        | `Ok mac -> OUnit.assert_failure (Printf.sprintf "pre-seeded query got a
+    MAC, but it's the wrong one: %s" (Macaddr.to_string mac))
+        | `Timeout -> OUnit.assert_failure "Query timed out for something that was
+    seeded in the cache"
+      ]
 
 let lwt_run f () = Lwt_main.run (f ())
 
@@ -315,14 +333,15 @@ let () =
        if an entry is in the cache, query returns it
     *)
     (* "query_sent", `Slow, lwt_run query_sent; *)
+    "query_for_seeded_cache", `Slow, lwt_run query_for_seeded_cache;
   ] in
   let input = [
     "input_single_reply", `Slow, lwt_run input_single_reply;
     "input_changed_ip", `Slow, lwt_run input_changed_ip ;
     "input_garbage", `Slow, lwt_run input_garbage
   ] in
-  let create : Alcotest.test_case list = [
-    "create_returns", `Slow, lwt_run create_returns ;
+  let create = [
+    "create_is_consistent", `Slow, lwt_run create_is_consistent ;
   ] in
   Alcotest.run "Irmin_arp.Arp" [
     "create", create;

@@ -120,8 +120,6 @@ module Arp = struct
        taking a setup parameter. *)
     let create ethif config = 
       let store = Irmin.basic (module Maker) (module T) in
-      (* currently the only impl of task is Irmin_unix.task; we could write our
-         own, I guess *)
       Irmin.create store config task >>= fun cache ->
       Irmin.update (cache "Arp.create: Initial empty cache") T.Path.empty T.empty 
       >>= fun () ->
@@ -227,10 +225,8 @@ module Arp = struct
       >>= fun table ->
       try
         match T.find ip table with
-        | Pending (t, _) ->
-          t
-        | Confirmed (_, mac) ->
-          Lwt.return (`Ok mac)
+        | Pending (t, _) -> t
+        | Confirmed (_, mac) -> Lwt.return (`Ok mac)
       with
       | Not_found ->
         let response, waker = MProf.Trace.named_wait "ARP response" in
