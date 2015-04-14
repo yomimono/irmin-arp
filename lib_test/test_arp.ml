@@ -282,7 +282,7 @@ let query_for_seeded_cache () =
   let root = root ^ "/query_for_seeded_cache" in
   let speak_dir = root ^ "/speaker" in
   let listen_dir = root ^ "/listener" in
-  let speak_config = Irmin_storer.config ~root () in
+  let speak_config = Irmin_storer.config ~root:speak_dir () in
   let backend = B.create () in
   get_arp ~backend ~root:speak_dir () >>= 
   fun (backend, speak_netif, speak_ethif, speak_arp) ->
@@ -290,10 +290,9 @@ let query_for_seeded_cache () =
   get_arp ~backend ~root:listen_dir () >>= 
   fun (backend, listen_netif, listen_ethif, listen_arp) ->
   let store = Irmin.basic (module Irmin_backend) (module T) in
-  Irmin.create store (Irmin_storer.config ~root:speak_dir ()) Irmin_unix.task >>= fun store ->
+  Irmin.create store speak_config Irmin_unix.task >>= fun store ->
   Irmin.read (store "readback of map") T.Path.empty >>= function
-    | None -> OUnit.assert_failure "Couldn't read store from
-    query_for_seeded_map"
+    | None -> OUnit.assert_failure "Couldn't read store from query_for_seeded_map"
     | Some map ->
       OUnit.assert_equal T.empty map;
       let seeded = T.add second_ip (Entry.Confirmed ((Clock.time () +. 60.), second_mac)) map in
