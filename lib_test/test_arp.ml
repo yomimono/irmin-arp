@@ -290,7 +290,7 @@ let query_for_seeded_cache () =
   get_arp ~backend ~root:listen_dir () >>= 
   fun (backend, listen_netif, listen_ethif, listen_arp) ->
   let store = Irmin.basic (module Irmin_backend) (module T) in
-  Irmin.create store speak_config Irmin_unix.task >>= fun store ->
+  Irmin.create store (Irmin_storer.config ~root:speak_dir ()) Irmin_unix.task >>= fun store ->
   Irmin.read (store "readback of map") T.Path.empty >>= function
     | None -> OUnit.assert_failure "Couldn't read store from
     query_for_seeded_map"
@@ -301,16 +301,20 @@ let query_for_seeded_cache () =
         seeded >>= fun () ->
       (* OK, we've written an entry, so now calling query should not emit an ARP
          query and should return before 1 retry interval *)
-      Lwt.join [
-        V.listen listen_netif (fun buf -> OUnit.assert_failure "Listener heard a
-    packet, but speaker should've had a cache entry");
+      timeout_or ~timeout:0.5 ~msg:"Query sent for something that was seeded in
+        the cache" listen_netif
+        (fun () ->
         A.query speak_arp second_ip >>= function
-        | `Ok mac when mac = second_mac -> (* yay! *) Lwt.return_unit
+        | `Ok mac when mac = second_mac -> (* yay! *) 
+          V.disconnect listen_netif
         | `Ok mac -> OUnit.assert_failure (Printf.sprintf "pre-seeded query got a
     MAC, but it's the wrong one: %s" (Macaddr.to_string mac))
         | `Timeout -> OUnit.assert_failure "Query timed out for something that was
     seeded in the cache"
-      ]
+        ) 
+        (fun () -> (fun buf -> OUnit.assert_failure "Listener heard a
+    packet, but speaker should've had a cache entry")
+        )
 
 let lwt_run f () = Lwt_main.run (f ())
 
