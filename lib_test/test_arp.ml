@@ -278,11 +278,10 @@ let parse_unparse () =
                                                          test_arp));
   Lwt.return_unit
 
-let query_for_seeded_cache () = 
-  let root = root ^ "/query_for_seeded_cache" in
+let query_with_seeded_cache () = 
+  let root = root ^ "/query_with_seeded_cache" in
   let speak_dir = root ^ "/speaker" in
   let listen_dir = root ^ "/listener" in
-  let speak_config = Irmin_storer.config ~root:speak_dir () in
   let backend = B.create () in
   get_arp ~backend ~root:speak_dir () >>= 
   fun (backend, speak_netif, speak_ethif, speak_arp) ->
@@ -290,20 +289,20 @@ let query_for_seeded_cache () =
   get_arp ~backend ~root:listen_dir () >>= 
   fun (backend, listen_netif, listen_ethif, listen_arp) ->
   let store = Irmin.basic (module Irmin_backend) (module T) in
+  let speak_config = Irmin_storer.config ~root:speak_dir () in
   Irmin.create store speak_config Irmin_unix.task >>= fun store ->
   Irmin.read (store "readback of map") T.Path.empty >>= function
     | None -> OUnit.assert_failure "Couldn't read store from query_for_seeded_map"
     | Some map ->
       OUnit.assert_equal T.empty map;
       let seeded = T.add second_ip (Entry.Confirmed ((Clock.time () +. 60.), second_mac)) map in
-      Irmin.update (store "query_for_seeded_cache: seed cache entry") T.Path.empty
+      Irmin.update (store "query_with_seeded_cache: seed cache entry") T.Path.empty
         seeded >>= fun () ->
-      (* OK, we've written an entry, so now calling query should not emit an ARP
-         query and should return before 1 retry interval *)
+      (* OK, we've written an entry, so now calling query for that key 
+         should not emit an ARP query and should return straight away *)
       timeout_or ~timeout:0.5 ~msg:"Query sent for something that was seeded in
         the cache" listen_netif
-        (fun () ->
-        A.query speak_arp second_ip >>= function
+        (fun () -> A.query speak_arp second_ip >>= function
         | `Ok mac when mac = second_mac -> (* yay! *) 
           V.disconnect listen_netif
         | `Ok mac -> OUnit.assert_failure (Printf.sprintf "pre-seeded query got a
@@ -314,6 +313,39 @@ let query_for_seeded_cache () =
         (fun () -> (fun buf -> OUnit.assert_failure "Listener heard a
     packet, but speaker should've had a cache entry")
         )
+
+let query_sent_with_empty_cache () =
+  let root = root ^ "/query_sent_with_empty_cache" in
+  let speak_dir = root ^ "/speaker" in
+  let listen_dir = root ^ "/listener" in
+  let backend = B.create () in
+  get_arp ~backend ~root:speak_dir () >>= 
+  fun (backend, speak_netif, speak_ethif, speak_arp) ->
+  get_arp ~backend ~root:listen_dir () >>= 
+  fun (backend, listen_netif, listen_ethif, listen_arp) ->
+  let do_fn () = 
+    A.query speak_arp first_ip >>= function
+    | `Ok mac -> OUnit.assert_failure "query returned a MAC when the cache
+    should've been empty and nobody could possibly be responding"
+    | `Timeout -> Lwt.return_unit (* we shouldn't get this far, but if
+                                     timeout_or has a large value we might and
+                                     if that happens, this is indeed the
+                                     expected behavior *)
+  in
+  let listen_fn () = 
+    fun buf -> 
+      match Irmin_arp.Arp.Parse.arp_of_cstruct buf with
+      | `Too_short | `Unusable | `Bad_mac _ -> OUnit.assert_failure "Attempting
+                                                 to produce a probe instead
+                                                 resulted in a strange packet"
+      | `Ok arp -> 
+        let expected_arp = { Irmin_arp.Arp.op = `Request; 
+                             sha = (V.mac speak_netif); spa = Ipaddr.V4.any;
+                             tha = Macaddr.broadcast; tpa = first_ip } in
+        OUnit.assert_equal expected_arp arp; V.disconnect listen_netif
+  in
+  timeout_or ~timeout:0.2 ~msg:"ARP probe not sent in response to a query"
+    listen_netif do_fn listen_fn
 
 let lwt_run f () = Lwt_main.run (f ())
 
@@ -335,8 +367,8 @@ let () =
        entries are aged out 
        if an entry is in the cache, query returns it
     *)
-    (* "query_sent", `Slow, lwt_run query_sent; *)
-    "query_for_seeded_cache", `Slow, lwt_run query_for_seeded_cache;
+    "query_with_seeded_cache", `Slow, lwt_run query_with_seeded_cache;
+    "query_sent_with_empty_cache", `Slow, lwt_run query_sent_with_empty_cache;
   ] in
   let input = [
     "input_single_reply", `Slow, lwt_run input_single_reply;
