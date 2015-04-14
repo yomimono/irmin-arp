@@ -117,16 +117,18 @@ module Arp = struct
 
     let rec tick t () =
       let now = Clock.time () in
-      let expired = Hashtbl.fold (fun ip entry expired ->
-          match entry with
-          | Pending _ -> expired
-          | Confirmed (t, _) -> if t >= now then ip :: expired else expired)
-          t.cache []
-      in
-      List.iter (fun ip -> printf "ARP: timeout %s\n%!"
-                    (Ipaddr.V4.to_string ip)) expired;
-      List.iter (Hashtbl.remove t.cache) expired;
-      Time.sleep arp_timeout >>= tick t
+      let tag = (Printf.sprintf "expire_%f" now) in
+      let (>>=) = Lwt.bind in
+      Irmin.clone_force task (t.cache "cloning for timeouts") tag >>= fun our_br ->
+      Irmin.read_exn (our_br "read for timeouts") T.Path.empty >>= fun table ->
+      let updated = T.expire now table in
+      (* TODO: this could stand to either not be committed if no changes happen,
+         or to have a more informative commit message, or both *)
+      Irmin.update (our_br "Arp.tick: updating to age out old entries") T.Path.empty updated >>= fun () ->
+      Irmin.merge "Arp.tick: merge expiry branch" our_br ~into:t.cache >>= function
+      | `Ok store -> Lwt_unix.sleep arp_timeout >>= fun () -> tick t ()
+      | `Conflict str -> Irmin.update (t.cache str) T.Path.empty table >>= fun () ->
+        Lwt_unix.sleep arp_timeout >>= fun () -> tick t ()
 
     (* TODO: treatment of multicast ethernet address messages differs between
        routers and end hosts; we have no way of knowing which we are without
