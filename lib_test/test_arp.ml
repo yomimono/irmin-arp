@@ -344,8 +344,26 @@ let query_sent_with_empty_cache () =
                              tha = Macaddr.broadcast; tpa = first_ip } in
         OUnit.assert_equal expected_arp arp; V.disconnect listen_netif
   in
-  timeout_or ~timeout:0.2 ~msg:"ARP probe not sent in response to a query"
+  timeout_or ~timeout:0.1 ~msg:"ARP probe not sent in response to a query"
     listen_netif do_fn listen_fn
+
+let entries_aged_out () =
+  let root = root ^ "/entries_aged_out" in
+  let speak_dir = root ^ "/speaker" in
+  let backend = B.create () in
+  get_arp ~backend ~root:speak_dir () >>= 
+  fun (backend, speak_netif, speak_ethif, speak_arp) ->
+  let store = Irmin.basic (module Irmin_backend) (module T) in
+  let speak_config = Irmin_storer.config ~root:speak_dir () in
+  Irmin.create store speak_config Irmin_unix.task >>= fun store ->
+  Irmin.read_exn (store "readback of map") T.Path.empty >>= fun map ->
+  let seeded = T.add second_ip (Entry.Confirmed ((Clock.time () -. 1000000.), second_mac)) map in
+  Irmin.update (store "entries_aged_out: seed cache entry") T.Path.empty
+    seeded >>= fun () ->
+  Lwt_unix.sleep 60. >>= fun () ->
+  Irmin.read_exn (store "readback of map") T.Path.empty >>= fun map ->
+  OUnit.assert_raises Not_found (fun () -> T.find second_ip map);
+  Lwt.return_unit
 
 let lwt_run f () = Lwt_main.run (f ())
 
@@ -360,12 +378,11 @@ let () =
   ] in
   let query = [
     (* 
-       tests from previous arp testing code:
-       arp probes are sent for entries not in the cache
-       once a response is received, query thread returns response immediately
+       x if an entry is in the cache, query returns it
+       x arp probes are sent for entries not in the cache
+       once a response is received, waiting thread returns response immediately
        probes are retried
        entries are aged out 
-       if an entry is in the cache, query returns it
     *)
     "query_with_seeded_cache", `Slow, lwt_run query_with_seeded_cache;
     "query_sent_with_empty_cache", `Slow, lwt_run query_sent_with_empty_cache;
@@ -376,12 +393,16 @@ let () =
     "input_garbage", `Slow, lwt_run input_garbage
   ] in
   let create = [
-    "create_is_consistent", `Slow, lwt_run create_is_consistent ;
+    "create_is_consistent", `Quick, lwt_run create_is_consistent ;
+  ] in
+  let aging = [
+    "entries_aged_out", `Slow, lwt_run entries_aged_out ;
   ] in
   Alcotest.run "Irmin_arp.Arp" [
     "create", create;
     "ip_CRUD", ip_crud;
     "parse", parse;
     "query", query;
-    "input", input
+    "input", input;
+    "aging", aging
   ]

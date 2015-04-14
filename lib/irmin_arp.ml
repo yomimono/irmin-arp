@@ -115,6 +115,19 @@ module Arp = struct
         (Macaddr.to_string arp.sha) (Ipaddr.V4.to_string arp.spa)
         (Macaddr.to_string arp.tha) (Ipaddr.V4.to_string arp.tpa)
 
+    let rec tick t () =
+      let now = Clock.time () in
+      let expired = Hashtbl.fold (fun ip entry expired ->
+          match entry with
+          | Pending _ -> expired
+          | Confirmed (t, _) -> if t >= now then ip :: expired else expired)
+          t.cache []
+      in
+      List.iter (fun ip -> printf "ARP: timeout %s\n%!"
+                    (Ipaddr.V4.to_string ip)) expired;
+      List.iter (Hashtbl.remove t.cache) expired;
+      Time.sleep arp_timeout >>= tick t
+
     (* TODO: treatment of multicast ethernet address messages differs between
        routers and end hosts; we have no way of knowing which we are without
        taking a setup parameter. *)
@@ -123,7 +136,10 @@ module Arp = struct
       Irmin.create store config task >>= fun cache ->
       Irmin.update (cache "Arp.create: Initial empty cache") T.Path.empty T.empty 
       >>= fun () ->
-      Lwt.return ({ ethif; bound_ips = []; cache; })
+      let t = { ethif; bound_ips = []; cache; } in
+      Lwt.async (tick t);
+      t
+
     let add_ip t ip = 
       match List.mem ip (t.bound_ips) with
       | true -> Lwt.return t
