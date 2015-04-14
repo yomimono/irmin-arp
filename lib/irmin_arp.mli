@@ -25,6 +25,7 @@ module Arp : sig
     val get_ips: t -> Ipaddr.V4.t list
     val remove_ip: t -> Ipaddr.V4.t -> t Lwt.t
     val input: t -> Cstruct.t -> unit Lwt.t
+    val query: t -> Ipaddr.V4.t -> [ `Ok of Macaddr.t | `Timeout ] Lwt.t
 
   end
 end
