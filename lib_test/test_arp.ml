@@ -29,7 +29,11 @@ let get_arp ?(backend = B.create ()) ~root () =
   A.create ethif config >>= fun a ->
   Lwt.return (backend, netif, ethif, a)
 
-let my_ip = Ipaddr.V4.of_string_exn "192.168.3.1"
+(* a few arbitrary addresses for convenience *)
+let first_ip = Ipaddr.V4.of_string_exn "192.168.3.1"
+let second_ip = Ipaddr.V4.of_string_exn "192.168.3.10"
+let first_mac = Macaddr.of_string_exn "00:16:3e:00:11:00"
+let second_mac = Macaddr.of_string_exn "10:9a:dd:c0:ff:ee"
 
 let create_returns () =
   (* Arp.create returns something bearing resemblance to an Arp.t *)
@@ -45,8 +49,11 @@ let create_returns () =
    typechecker does for us for free *)
 
 let timeout_or ~timeout ~msg listen_netif do_fn listen_fn =
-  (* set up a listener on listen_netif that fails if it doesn't hear a GARP
-     within some small number of seconds *)
+  (* do something; also set up a listener on listen_netif 
+     timeout after the specified amount of time with a failure message 
+  *)
+  (* this works best if listen_fn calls V.disconnect on listen_netif after
+     getting the information it needs *)
   Lwt.join [
     do_fn ();
     (Lwt.pick [
@@ -60,15 +67,15 @@ let set_ips () =
   (* set up a listener that will return when it hears a GARP *)
   or_error "backend" V.connect backend >>= fun listen_netif ->
 (* TODO: according to the contract in arpv4.mli, add_ip, set_ip, and remove_ip
-   are supposed to emit GARP packets; we should make sure that actually happens
+   are supposed to emit GARP packets; we should 
    generalize this test for use in other functions *)
   let do_fn () =
-    A.set_ips a [ my_ip ] >>= fun a ->
-    OUnit.assert_equal [ my_ip ] (A.get_ips a);
+    A.set_ips a [ first_ip ] >>= fun a ->
+    OUnit.assert_equal [ first_ip ] (A.get_ips a);
     Lwt.return_unit
   in
   let listen_fn () =
-    (fun buf -> match Irmin_arp.Arp.Parse.is_garp_for my_ip buf with
+    (fun buf -> match Irmin_arp.Arp.Parse.is_garp_for first_ip buf with
        | true -> V.disconnect listen_netif
        | false ->
          match Irmin_arp.Arp.Parse.arp_of_cstruct buf with
@@ -83,22 +90,22 @@ let set_ips () =
     listen_netif do_fn listen_fn >>= fun () ->
   A.set_ips a [] >>= fun a ->
   OUnit.assert_equal [] (A.get_ips a);
-  A.set_ips a [ my_ip; Ipaddr.V4.of_string_exn "10.20.1.1" ] >>= fun a ->
-  OUnit.assert_equal [ my_ip; Ipaddr.V4.of_string_exn "10.20.1.1" ] (A.get_ips
+  A.set_ips a [ first_ip; Ipaddr.V4.of_string_exn "10.20.1.1" ] >>= fun a ->
+  OUnit.assert_equal [ first_ip; Ipaddr.V4.of_string_exn "10.20.1.1" ] (A.get_ips
                                                                        a);
   Lwt.return_unit
 
 let get_remove_ips () =
   get_arp ~root:(root ^ "/remove_ips") () >>= fun (backend, _, _, a) ->
   OUnit.assert_equal [] (A.get_ips a);
-  A.set_ips a [ my_ip; my_ip ] >>= fun a ->
+  A.set_ips a [ first_ip; first_ip ] >>= fun a ->
   let ips = A.get_ips a in
-  OUnit.assert_equal true (List.mem my_ip ips);
-  OUnit.assert_equal true (List.for_all (fun a -> a = my_ip) ips);
+  OUnit.assert_equal true (List.mem first_ip ips);
+  OUnit.assert_equal true (List.for_all (fun a -> a = first_ip) ips);
   OUnit.assert_equal true (List.length ips >= 1 && List.length ips <= 2);
-  A.remove_ip a my_ip >>= fun a ->
+  A.remove_ip a first_ip >>= fun a ->
   OUnit.assert_equal [] (A.get_ips a);
-  A.remove_ip a my_ip >>= fun a ->
+  A.remove_ip a first_ip >>= fun a ->
   OUnit.assert_equal [] (A.get_ips a);
   Lwt.return_unit
 
@@ -115,7 +122,7 @@ let input_single_reply () =
      other *)
   timeout_or ~timeout:0.1 ~msg:"Nothing received by listen_netif when trying to
   do single reply test"
-    listen_netif (fun () -> A.set_ips speak_arp [ my_ip ] >>= fun _a -> Lwt.return_unit)
+    listen_netif (fun () -> A.set_ips speak_arp [ first_ip ] >>= fun _a -> Lwt.return_unit)
     (fun () -> fun buf -> A.input listen_arp buf >>= fun () -> V.disconnect listen_netif)
   >>= fun () ->
   (* load our own representation of the ARP cache of the listener *)
@@ -124,7 +131,7 @@ let input_single_reply () =
   Irmin.read_exn (store "readback of map") T.Path.empty >>= fun map ->
   try
     let open Entry in
-    match T.find my_ip map with
+    match T.find first_ip map with
     | Confirmed (time, entry) -> OUnit.assert_equal ~printer:Macaddr.to_string 
                                    entry (V.mac speak_netif);
       Lwt.return_unit
@@ -149,7 +156,7 @@ let input_changed_ip () =
     A.set_ips speak_arp [ Ipaddr.V4.of_string_exn "10.23.10.1" ] >>= fun speak_arp ->
     A.set_ips speak_arp [ Ipaddr.V4.of_string_exn "10.50.20.22" ] >>= fun speak_arp ->
     A.set_ips speak_arp [ Ipaddr.V4.of_string_exn "10.20.254.2" ] >>= fun speak_arp ->
-    A.set_ips speak_arp [ my_ip ] >>= fun speak_arp ->
+    A.set_ips speak_arp [ first_ip ] >>= fun speak_arp ->
     Lwt_unix.sleep 0.1 >>= fun () -> V.disconnect listen_netif >>= fun () ->
     Lwt.return_unit
   in
@@ -159,14 +166,14 @@ let input_changed_ip () =
   in
   Lwt.join [ multiple_ips (); listen_fn () ] >>= fun () ->
   (* listen_config should have the ARP cache history reflecting the updates send
-     by speak_arp; a current read should show us my_ip *)
+     by speak_arp; a current read should show us first_ip *)
   let store = Irmin.basic (module Irmin_backend) (module T) in
   Irmin.create store listen_config Irmin_unix.task >>= fun store ->
   Irmin.read_exn (store "readback of map") T.Path.empty >>= fun map ->
   (* TODO: iterate over the commit history of IPs *)
   try
     let open Entry in
-    match T.find my_ip map with
+    match T.find first_ip map with
     | Confirmed (time, entry) -> OUnit.assert_equal entry (V.mac speak_netif);
       Lwt.return_unit
     | Pending _ -> OUnit.assert_failure "Pending entry for an entry that had a
@@ -184,7 +191,7 @@ let input_garbage () =
   or_error "backend" V.connect backend >>= fun listen_netif ->
   or_error "ethif" E.connect listen_netif >>= fun listen_ethif ->
   A.create listen_ethif listen_config >>= fun listen_arp ->
-  A.set_ips listen_arp [ my_ip ] >>= fun listen_arp ->
+  A.set_ips listen_arp [ first_ip ] >>= fun listen_arp ->
   let listen_fn () = V.listen listen_netif (E.input ~arpv4:(A.input listen_arp)
       ~ipv4:(fun buf -> Lwt.return_unit) ~ipv6:(fun buf -> Lwt.return_unit)
       listen_ethif)
@@ -200,11 +207,11 @@ let input_garbage () =
   let speaker_mac = V.mac speak_netif in
   (* don't keep entries for unicast replies to someone else *)
   let for_someone_else = Irmin_arp.Arp.Parse.cstruct_of_arp 
-      { Irmin_arp.Arp.op = `Reply; sha = listener_mac; tha = speaker_mac; spa = my_ip; 
+      { Irmin_arp.Arp.op = `Reply; sha = listener_mac; tha = speaker_mac; spa = first_ip; 
         tpa = Ipaddr.V4.of_string_exn "192.168.3.50" } in
   (* don't store cache entries for broadcast either, even if someone claims it *)
   let claiming_broadcast = Irmin_arp.Arp.Parse.cstruct_of_arp 
-      { Irmin_arp.Arp.op = `Reply; sha = Macaddr.broadcast; tha = listener_mac; spa = my_ip; 
+      { Irmin_arp.Arp.op = `Reply; sha = Macaddr.broadcast; tha = listener_mac; spa = first_ip; 
         tpa = Ipaddr.V4.of_string_exn "192.168.3.50" } in
   (* TODO: don't set entries for non-unicast MACs if we're a router, but do if
      we're a host (set via some parameter at creation time, presumably) *)
@@ -212,8 +219,8 @@ let input_garbage () =
      we never make a cache entry *)
   (* don't believe someone else if they claim one of our IPs *)
   let claiming_ours = Irmin_arp.Arp.Parse.cstruct_of_arp 
-      { Irmin_arp.Arp.op = `Reply; sha = speaker_mac; tha = listener_mac; spa = my_ip; 
-        tpa = my_ip } in
+      { Irmin_arp.Arp.op = `Reply; sha = speaker_mac; tha = listener_mac; spa = first_ip; 
+        tpa = first_ip } in
   Lwt.join [ listen_fn (); send_buf_sleep_then_dc 
                [(Cstruct.create 0); for_someone_else;
                 claiming_broadcast; claiming_ours ] () ] 
@@ -254,7 +261,38 @@ let parse_zeros () =
   | `Ok all_zero -> OUnit.assert_failure "Arp.parse allowed a 0 protocol"
   | `Unusable -> (* correct! *) Lwt.return_unit
 
-let query_sent () = Lwt.return_unit
+let parse_unparse () =
+  let module P = Irmin_arp.Arp.Parse in
+  let test_arp = { Irmin_arp.Arp.op = `Request; 
+                   sha = first_mac; spa = first_ip; 
+                   tha = second_mac; tpa = second_ip; } in
+  OUnit.assert_equal (`Ok test_arp) (P.arp_of_cstruct (P.cstruct_of_arp
+                                                         test_arp));
+  Lwt.return_unit
+
+let query_for_seeded_cache () = 
+  let root = root ^ "/query_for_seeded_cache" in
+  let speak_dir = root ^ "/speaker" in
+  let listen_dir = root ^ "/listener" in
+  let speak_config = Irmin_storer.config ~root () in
+  let backend = B.create () in
+  get_arp ~backend ~root:speak_dir () >>= 
+  fun (backend, speak_netif, speak_ethif, speak_arp) ->
+  A.set_ips speak_arp [ first_ip ] >>= fun speak_arp ->
+  get_arp ~backend ~root:listen_dir () >>= 
+  fun (backend, listen_netif, listen_ethif, listen_arp) ->
+  let store = Irmin.basic (module Irmin_backend) (module T) in
+  Irmin.create store speak_config Irmin_unix.task >>= fun store ->
+  Irmin.read_exn (store "readback of map") T.Path.empty >>= fun map ->
+  OUnit.assert_equal T.empty map;
+  let seeded = T.add second_ip (Entry.Confirmed ((Clock.time () +. 60.), second_mac)) map in
+  Irmin.update (store "query_for_seeded_cache: seed cache entry") T.Path.empty
+    seeded >>= fun () ->
+  (* OK, we've written an entry, so now calling query should not emit an ARP
+     query and should return before 1 retry interval *)
+  Lwt.join [
+
+  ]
 
 let lwt_run f () = Lwt_main.run (f ())
 
@@ -264,7 +302,8 @@ let () =
     "get_remove_ips", `Slow, lwt_run get_remove_ips;
   ] in
   let parse = [
-    "parse_zeros", `Slow, lwt_run parse_zeros;
+    "parse_zeros", `Quick, lwt_run parse_zeros;
+    "parse_unparse", `Quick, lwt_run parse_unparse;
   ] in
   let query = [
     (* 
@@ -273,8 +312,9 @@ let () =
        once a response is received, query thread returns response immediately
        probes are retried
        entries are aged out 
+       if an entry is in the cache, query returns it
     *)
-    "query_sent", `Slow, lwt_run query_sent;
+    (* "query_sent", `Slow, lwt_run query_sent; *)
   ] in
   let input = [
     "input_single_reply", `Slow, lwt_run input_single_reply;
