@@ -2,7 +2,7 @@ open Lwt
 module B = Basic_backend.Make
 module V = Vnetif.Make(B)
 module E = Ethif.Make(V)
-module T = Irmin_arp.Table(Irmin.Path.String_list)
+module T = Table.Make(Irmin.Path.String_list)
 module Irmin_storer = Irmin_git
 module Irmin_backend = Irmin_unix.Irmin_git.FS
 module I = Irmin.Basic(Irmin_backend)(T)
@@ -121,7 +121,7 @@ let input_single_reply () =
   Irmin.create store listen_config Irmin_unix.task >>= fun store ->
   Irmin.read_exn (store "readback of map") T.Path.empty >>= fun map ->
   try
-    let open Irmin_arp.Entry in
+    let open Entry in
     match T.find my_ip map with
     | Confirmed (time, entry) -> OUnit.assert_equal ~printer:Macaddr.to_string 
                                    entry (V.mac speak_netif);
@@ -163,7 +163,7 @@ let input_changed_ip () =
   Irmin.read_exn (store "readback of map") T.Path.empty >>= fun map ->
   (* TODO: iterate over the commit history of IPs *)
   try
-    let open Irmin_arp.Entry in
+    let open Entry in
     match T.find my_ip map with
     | Confirmed (time, entry) -> OUnit.assert_equal entry (V.mac speak_netif);
       Lwt.return_unit

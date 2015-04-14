@@ -2,9 +2,9 @@ open Test_lib
 
 let write_empty_json () =
   (* empty map -> unit json *)
-  let map = Ipv4_map.empty in
+  let map = T.empty in
   OUnit.assert_equal ~printer:(fun p -> Ezjsonm.to_string (Ezjsonm.wrap p)) 
-    (Ezjsonm.dict []) (T.Ops.to_json map)
+    (Ezjsonm.dict []) (T.to_json map)
 
 let write_single_complete_entry () =
   let map = Ipv4_map.empty in

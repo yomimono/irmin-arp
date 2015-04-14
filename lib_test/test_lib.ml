@@ -1,6 +1,5 @@
-module T = Irmin_arp.Table(Irmin.Path.String_list)
+module T = Table.Make(Irmin.Path.String_list)
 module Ipv4_map = T.M
-module Entry = Irmin_arp.Entry
 
 let parse ip mac time = (Ipaddr.V4.of_string_exn ip, Macaddr.of_string_exn
                            mac, time)
