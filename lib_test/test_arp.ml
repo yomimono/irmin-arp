@@ -68,11 +68,13 @@ let set_ips () =
     Lwt.return_unit
   in
   let listen_fn () =
-    (fun buf -> match A.is_garp my_ip buf with
+    (fun buf -> match Irmin_arp.Arp.Parse.is_garp_for my_ip buf with
        | true -> V.disconnect listen_netif
        | false ->
-         match A.arp_of_cstruct buf with
+         match Irmin_arp.Arp.Parse.arp_of_cstruct buf with
          | `Ok arp -> OUnit.assert_failure "something ARP but non-GARP sent after set_ips"
+         | `Unusable -> OUnit.assert_failure "set_ips seems to have sent
+         us something that expects a protocol other than ipv4"
          | `Bad_mac _ -> OUnit.assert_failure "couldn't parse a MAC out of something set_ips sent"
          | `Too_short -> OUnit.assert_failure "got a short packet after set_ips"
     )
@@ -197,20 +199,20 @@ let input_garbage () =
   let listener_mac = V.mac listen_netif in
   let speaker_mac = V.mac speak_netif in
   (* don't keep entries for unicast replies to someone else *)
-  let for_someone_else = A.cstruct_of_arp 
-      { op = `Reply; sha = listener_mac; tha = speaker_mac; spa = my_ip; 
+  let for_someone_else = Irmin_arp.Arp.Parse.cstruct_of_arp 
+      { Irmin_arp.Arp.op = `Reply; sha = listener_mac; tha = speaker_mac; spa = my_ip; 
         tpa = Ipaddr.V4.of_string_exn "192.168.3.50" } in
   (* don't store cache entries for broadcast either, even if someone claims it *)
-  let claiming_broadcast = A.cstruct_of_arp 
-      { op = `Reply; sha = Macaddr.broadcast; tha = listener_mac; spa = my_ip; 
+  let claiming_broadcast = Irmin_arp.Arp.Parse.cstruct_of_arp 
+      { Irmin_arp.Arp.op = `Reply; sha = Macaddr.broadcast; tha = listener_mac; spa = my_ip; 
         tpa = Ipaddr.V4.of_string_exn "192.168.3.50" } in
   (* TODO: don't set entries for non-unicast MACs if we're a router, but do if
      we're a host (set via some parameter at creation time, presumably) *)
   (* TODO: another decent property test -- if op is something other than reply,
      we never make a cache entry *)
   (* don't believe someone else if they claim one of our IPs *)
-  let claiming_ours = A.cstruct_of_arp 
-      { op = `Reply; sha = speaker_mac; tha = listener_mac; spa = my_ip; 
+  let claiming_ours = Irmin_arp.Arp.Parse.cstruct_of_arp 
+      { Irmin_arp.Arp.op = `Reply; sha = speaker_mac; tha = listener_mac; spa = my_ip; 
         tpa = my_ip } in
   Lwt.join [ listen_fn (); send_buf_sleep_then_dc 
                [(Cstruct.create 0); for_someone_else;
@@ -227,13 +229,12 @@ let input_garbage () =
 (* TODO: this test feels out of place here; I think this yet another
    manifestation of needing a central place/system for parsing arbitrary network
    nonsense according to spec *)
-let parse_garbage () =
+(* TODO: Too_short and Unusable are excellent candidates for property-based tests *)
+let parse_zeros () =
   let open A in
-  (* TODO: make sure we do the right thing with unusual htype, ptype, hlen, plen *)
-  (* not sure what the right thing is, but look it up and do that *)
-  OUnit.assert_equal `Too_short (A.arp_of_cstruct (Cstruct.create 0));
+  OUnit.assert_equal `Too_short (Irmin_arp.Arp.Parse.arp_of_cstruct (Cstruct.create 0));
   OUnit.assert_equal `Too_short 
-    (A.arp_of_cstruct (Cstruct.create (Wire_structs.Arpv4_wire.sizeof_arp - 1)));
+    (Irmin_arp.Arp.Parse.arp_of_cstruct (Cstruct.create (Wire_structs.Arpv4_wire.sizeof_arp - 1)));
   (* I think we actually can't trigger `Bad_mac, since the only condition that
      causes that in the underlying Macaddr implementation is being provided a
      string of insufficient size, which we guard against with `Too_short, ergo
@@ -245,18 +246,13 @@ let parse_garbage () =
   in
   let all_zero = zero_cstruct (Cstruct.create
                                  (Wire_structs.Arpv4_wire.sizeof_arp)) in
-  match A.arp_of_cstruct all_zero with
+  match Irmin_arp.Arp.Parse.arp_of_cstruct all_zero with
   | `Too_short -> OUnit.assert_failure 
     "Arp.parse claimed that an appropriate-length zero'd buffer was too short"
   | `Bad_mac l -> let mac_strs = Printf.sprintf "%S" (String.concat ", " l) in
     OUnit.assert_failure ("Arp.parse claimed these were bad MACs: " ^ mac_strs)
-  | `Ok all_zero -> 
-    let zero_mac = Macaddr.of_string_exn "00:00:00:00:00:00" in
-    let zero_ip = Ipaddr.V4.of_string_exn "0.0.0.0" in
-    let zero_arp = { op=(`Unknown 0); sha=zero_mac; tha=zero_mac; spa=zero_ip;
-                     tpa=zero_ip} in
-    OUnit.assert_equal ~printer:A.string_of_arp zero_arp all_zero;
-    Lwt.return_unit
+  | `Ok all_zero -> OUnit.assert_failure "Arp.parse allowed a 0 protocol"
+  | `Unusable -> (* correct! *) Lwt.return_unit
 
 let query_sent () = Lwt.return_unit
 
@@ -268,7 +264,7 @@ let () =
     "get_remove_ips", `Slow, lwt_run get_remove_ips;
   ] in
   let parse = [
-    "parse_garbage", `Slow, lwt_run parse_garbage;
+    "parse_zeros", `Slow, lwt_run parse_zeros;
   ] in
   let query = [
     (* 
