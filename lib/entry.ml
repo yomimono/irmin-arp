@@ -39,7 +39,7 @@ let is_pending = function | Confirmed _ -> false | Pending _ -> true
    pending trumps absent *)
 let compare p q =
   match (p, q) with
-  | Pending _, Pending _ -> -1 (* arbitrarily; doesn't really matter *)
+  | Pending (p,_),  Pending (q,_) -> compare p q
   | Pending _, Confirmed _ -> -1
   | Confirmed (p_time, _), Confirmed (q_time, _) -> compare p_time q_time
   | Confirmed _, Pending _ -> 1 
