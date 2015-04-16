@@ -49,7 +49,17 @@ let readback_works _ctx =
     () ->
   return_unit
 
-let simple_update_works _cts =
+let expire () = 
+  let ip = Ipaddr.V4.of_string_exn "10.0.0.1" in
+  let mac = Macaddr.of_string_exn "00:16:3e:c0:ff:33" in
+  let map = T.add ip (Entry.Confirmed (0.0, mac)) T.empty in
+  OUnit.assert_equal (Entry.Confirmed (0.0, mac)) (T.find ip map);
+  let expired_map = T.expire map 1337.3030 in
+  OUnit.assert_raises Not_found (fun () -> T.find ip expired_map);
+  OUnit.assert_equal T.empty expired_map;
+  Lwt.return_unit
+
+let simple_update_works _ctx =
   let node = (test_node "simple_update") in
   let original = T.of_map (sample_table ()) in
   make_on_disk ~root ~bare:false () >>= fun t ->
@@ -196,18 +206,22 @@ let lwt_run f () = Lwt_main.run (f ())
 
 let () =
   let readback = [
-    "readback", `Slow, lwt_run readback_works;
+    "readback", `Quick, lwt_run readback_works;
+  ] in
+  let expire = [
+    "expire", `Quick, lwt_run expire;
   ] in
   let update = [
-    "simple_update", `Slow, lwt_run simple_update_works;
+    "simple_update", `Quick, lwt_run simple_update_works;
   ] in
   let merge = [
-    "merge w/divergent nodes", `Slow, lwt_run merge_conflicts_solved;
-    "merge w/conflict; remove then update", `Slow, lwt_run complex_merge_remove_then_update;
-    "merge w/conflict; both clones, both updates, both merges", `Slow, lwt_run
+    "merge w/divergent nodes", `Quick, lwt_run merge_conflicts_solved;
+    "merge w/conflict; remove then update", `Quick, lwt_run complex_merge_remove_then_update;
+    "merge w/conflict; both clones, both updates, both merges", `Quick, lwt_run
       complex_merge_pairwise;
   ] in
   Alcotest.run "Irmin_arp" [
+    "expire", expire;
     "readback", readback;
     "update", update;
     "merge", merge;
