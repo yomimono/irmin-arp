@@ -10,4 +10,5 @@ module Make(P: Irmin.Path.S) : sig
   val remove : Key.t -> t -> t
   val find : Key.t -> t -> Entry.t
   val empty : t
+  val expire : t -> float -> t
 end
