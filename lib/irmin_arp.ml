@@ -121,7 +121,7 @@ module Arp = struct
       let (>>=) = Lwt.bind in
       Irmin.clone_force task (t.cache "cloning for timeouts") tag >>= fun our_br ->
       Irmin.read_exn (our_br "read for timeouts") T.Path.empty >>= fun table ->
-      let updated = T.expire now table in
+      let updated = T.expire table now in
       (* TODO: this could stand to either not be committed if no changes happen,
          or to have a more informative commit message, or both *)
       Irmin.update (our_br "Arp.tick: updating to age out old entries") T.Path.empty updated >>= fun () ->
@@ -140,7 +140,7 @@ module Arp = struct
       >>= fun () ->
       let t = { ethif; bound_ips = []; cache; } in
       Lwt.async (tick t);
-      t
+      Lwt.return t
 
     let add_ip t ip = 
       match List.mem ip (t.bound_ips) with
@@ -168,7 +168,7 @@ module Arp = struct
         | Entry.Pending (_, w) ->
           let str = "entry resolved: " ^ Ipaddr.V4.to_string ip ^ " -> " ^
                     Macaddr.to_string mac in
-          let updated = T.add ip (Confirmed (expire, mac)) table in
+          let updated = T.add ip (Entry.Confirmed (expire, mac)) table in
           Irmin.update (t.cache str) T.Path.empty updated >>= fun
             () ->
           Lwt.wakeup w (`Ok mac);
@@ -176,7 +176,7 @@ module Arp = struct
         | Entry.Confirmed _ ->
           let str = "entry updated: " ^ Ipaddr.V4.to_string ip ^ " -> " ^
                     Macaddr.to_string mac in
-          let updated = T.add ip (Confirmed (expire, mac)) table in
+          let updated = T.add ip (Entry.Confirmed (expire, mac)) table in
           Irmin.update (t.cache str) T.Path.empty updated >>= fun
             () ->
           Lwt.return_unit
@@ -185,7 +185,7 @@ module Arp = struct
         let str = "entry added: " ^ Ipaddr.V4.to_string ip ^ " -> " ^
                   Macaddr.to_string mac in
         Irmin.read_exn (t.cache "lookup") T.Path.empty >>= fun table ->
-        let updated = T.add ip (Confirmed (expire, mac)) table in
+        let updated = T.add ip (Entry.Confirmed (expire, mac)) table in
         Irmin.update (t.cache str) T.Path.empty updated >>= fun
           () ->
         Lwt.return_unit
