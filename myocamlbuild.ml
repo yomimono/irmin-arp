@@ -1,5 +1,5 @@
 (* OASIS_START *)
-(* DO NOT EDIT (digest: bf76395503f9aa698523c35a421abdcf) *)
+(* DO NOT EDIT (digest: c015fea32467f775d24df9929b389694) *)
 module OASISGettext = struct
 (* # 22 "src/oasis/OASISGettext.ml" *)
 
@@ -607,7 +607,7 @@ end
 open Ocamlbuild_plugin;;
 let package_default =
   {
-     MyOCamlbuildBase.lib_ocaml = [("irmin_arp", ["lib"], [])];
+     MyOCamlbuildBase.lib_ocaml = [("irmin-arp", ["lib"], [])];
      lib_c = [];
      flags = [];
      includes = [("lib_test", ["lib"])]

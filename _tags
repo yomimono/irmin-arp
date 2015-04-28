@@ -1,5 +1,5 @@
 # OASIS_START
-# DO NOT EDIT (digest: 245a0378e4bf873ebcd8afbca751d124)
+# DO NOT EDIT (digest: f02bcb051f6f80a67d7505553d46db5a)
 # Ignore VCS directories, you can use the same kind of rule outside
 # OASIS_START/STOP if you want to exclude directories that contains
 # useless stuff for the build process
@@ -14,14 +14,13 @@ true: annot, bin_annot
 ".git": not_hygienic
 "_darcs": -traverse
 "_darcs": not_hygienic
-# Library irmin_arp
-"lib/irmin_arp.cmxs": use_irmin_arp
+# Library irmin-arp
+"lib/irmin-arp.cmxs": use_irmin-arp
 <lib/*.ml{,i,y}>: pkg_ezjsonm
 <lib/*.ml{,i,y}>: pkg_ipaddr
 <lib/*.ml{,i,y}>: pkg_irmin
 <lib/*.ml{,i,y}>: pkg_lwt
 <lib/*.ml{,i,y}>: pkg_mirage-types
-<lib/*.ml{,i,y}>: pkg_mirage-unix
 <lib/*.ml{,i,y}>: pkg_tcpip
 <lib/*.ml{,i,y}>: pkg_tcpip.ipv4
 # Executable test_ops
@@ -32,11 +31,10 @@ true: annot, bin_annot
 <lib_test/test_ops.{native,byte}>: pkg_irmin.unix
 <lib_test/test_ops.{native,byte}>: pkg_lwt
 <lib_test/test_ops.{native,byte}>: pkg_mirage-types
-<lib_test/test_ops.{native,byte}>: pkg_mirage-unix
 <lib_test/test_ops.{native,byte}>: pkg_oUnit
 <lib_test/test_ops.{native,byte}>: pkg_tcpip
 <lib_test/test_ops.{native,byte}>: pkg_tcpip.ipv4
-<lib_test/test_ops.{native,byte}>: use_irmin_arp
+<lib_test/test_ops.{native,byte}>: use_irmin-arp
 # Executable test_table
 <lib_test/test_table.{native,byte}>: pkg_alcotest
 <lib_test/test_table.{native,byte}>: pkg_ezjsonm
@@ -45,11 +43,10 @@ true: annot, bin_annot
 <lib_test/test_table.{native,byte}>: pkg_irmin.unix
 <lib_test/test_table.{native,byte}>: pkg_lwt
 <lib_test/test_table.{native,byte}>: pkg_mirage-types
-<lib_test/test_table.{native,byte}>: pkg_mirage-unix
 <lib_test/test_table.{native,byte}>: pkg_oUnit
 <lib_test/test_table.{native,byte}>: pkg_tcpip
 <lib_test/test_table.{native,byte}>: pkg_tcpip.ipv4
-<lib_test/test_table.{native,byte}>: use_irmin_arp
+<lib_test/test_table.{native,byte}>: use_irmin-arp
 # Executable test_arp
 <lib_test/test_arp.{native,byte}>: pkg_alcotest
 <lib_test/test_arp.{native,byte}>: pkg_ezjsonm
@@ -65,7 +62,7 @@ true: annot, bin_annot
 <lib_test/test_arp.{native,byte}>: pkg_tcpip
 <lib_test/test_arp.{native,byte}>: pkg_tcpip.ethif
 <lib_test/test_arp.{native,byte}>: pkg_tcpip.ipv4
-<lib_test/test_arp.{native,byte}>: use_irmin_arp
+<lib_test/test_arp.{native,byte}>: use_irmin-arp
 <lib_test/*.ml{,i,y}>: pkg_alcotest
 <lib_test/*.ml{,i,y}>: pkg_ezjsonm
 <lib_test/*.ml{,i,y}>: pkg_ipaddr
@@ -80,5 +77,5 @@ true: annot, bin_annot
 <lib_test/*.ml{,i,y}>: pkg_tcpip
 <lib_test/*.ml{,i,y}>: pkg_tcpip.ethif
 <lib_test/*.ml{,i,y}>: pkg_tcpip.ipv4
-<lib_test/*.ml{,i,y}>: use_irmin_arp
+<lib_test/*.ml{,i,y}>: use_irmin-arp
 # OASIS_STOP

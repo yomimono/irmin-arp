@@ -1,5 +1,5 @@
 OASISFormat: 0.4
-Name:        irmin_arp
+Name:        irmin-arp
 Version:     0.0.1
 Synopsis:    you know what arp caches need?  dvcs.
 Authors:     Mindy Preston
@@ -7,11 +7,11 @@ License:     ISC
 Plugins:     META (0.4), DevFiles (0.4)
 BuildTools:  ocamlbuild
 
-Library irmin_arp
+Library "irmin-arp"
   Path:            lib/
-  Findlibname:     irmin_arp
+  Findlibname:     irmin-arp
   Modules:         Irmin_arp, Table, Entry, Key
-  BuildDepends:    irmin, lwt, ipaddr, tcpip, tcpip.ipv4, ezjsonm, mirage-types, mirage-unix
+  BuildDepends:    irmin, lwt, ipaddr, tcpip, tcpip.ipv4, ezjsonm, mirage-types
 
 Executable test_ops
   Build$:         flag(tests)
@@ -19,7 +19,7 @@ Executable test_ops
   MainIs:         test_ops.ml
   CompiledObject: best
   Install:        false
-  BuildDepends:   irmin, irmin_arp, lwt, irmin.unix, ipaddr, alcotest, oUnit
+  BuildDepends:   irmin, irmin-arp, lwt, irmin.unix, ipaddr, alcotest, oUnit
 
 Executable test_table
   Build$:         flag(tests)
@@ -27,7 +27,7 @@ Executable test_table
   MainIs:         test_table.ml
   CompiledObject: best
   Install:        false
-  BuildDepends:   irmin, irmin_arp, lwt, irmin.unix, ipaddr, alcotest, oUnit
+  BuildDepends:   irmin, irmin-arp, lwt, irmin.unix, ipaddr, alcotest, oUnit
 
 Executable test_arp
   Build$:         flag(tests)
@@ -35,7 +35,7 @@ Executable test_arp
   MainIs:         test_arp.ml
   CompiledObject: best
   Install:        false
-  BuildDepends:   irmin, irmin_arp, lwt, irmin.unix, ipaddr, tcpip.ethif, tcpip.ipv4, alcotest, oUnit, mirage-vnetif, mirage-types, mirage-clock-unix
+  BuildDepends:   irmin, irmin-arp, lwt, irmin.unix, ipaddr, tcpip.ethif, tcpip.ipv4, alcotest, oUnit, mirage-vnetif, mirage-types, mirage-clock-unix, mirage-unix
 
 Test test_ops
   Run$: flag(tests)
