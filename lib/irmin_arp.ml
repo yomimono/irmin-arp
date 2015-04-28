@@ -81,10 +81,11 @@ module Arp = struct
       | _ -> false
   end
 
-
+  (* TODO: to pass an initial entry to the table, we must functorize T;
+     otherwise, the caller can't know whaat kind of thing to pass us. *)
   (* much cribbed from mirage-tcpip/lib/arpv4.ml *)
-  module Make (Ethif : V1_LWT.ETHIF) (Clock: V1.CLOCK) (Maker : Irmin.S_MAKER)
-  = struct
+  module Make (Ethif : V1_LWT.ETHIF) (Clock: V1.CLOCK) (Time: V1_LWT.TIME) 
+      (Maker : Irmin.S_MAKER) = struct
     module T = Table.Make(Irmin.Path.String_list)
     module I = Irmin.Basic (Maker) (T)
     type cache = (string -> ([ `BC ], T.Path.t, T.t) Irmin.t)
@@ -119,6 +120,7 @@ module Arp = struct
       let now = Clock.time () in
       let tag = (Printf.sprintf "expire_%f" now) in
       let (>>=) = Lwt.bind in
+      (* seems like clone_force might give us something stale? *)
       Irmin.clone_force task (t.cache "cloning for timeouts") tag >>= fun our_br ->
       Irmin.read_exn (our_br "read for timeouts") T.Path.empty >>= fun table ->
       let updated = T.expire table now in
@@ -126,14 +128,14 @@ module Arp = struct
          or to have a more informative commit message, or both *)
       Irmin.update (our_br "Arp.tick: updating to age out old entries") T.Path.empty updated >>= fun () ->
       Irmin.merge "Arp.tick: merge expiry branch" our_br ~into:t.cache >>= function
-      | `Ok store -> Lwt_unix.sleep arp_timeout >>= fun () -> tick t ()
+      | `Ok store -> Time.sleep arp_timeout >>= fun () -> tick t ()
       | `Conflict str -> Irmin.update (t.cache str) T.Path.empty table >>= fun () ->
-        Lwt_unix.sleep arp_timeout >>= fun () -> tick t ()
+        Time.sleep arp_timeout >>= fun () -> tick t ()
 
     (* TODO: treatment of multicast ethernet address messages differs between
        routers and end hosts; we have no way of knowing which we are without
        taking a setup parameter. *)
-    let create ethif config = 
+    let create ethif config =
       let store = Irmin.basic (module Maker) (module T) in
       Irmin.create store config task >>= fun cache ->
       Irmin.update (cache "Arp.create: Initial empty cache") T.Path.empty T.empty 
@@ -260,7 +262,7 @@ module Arp = struct
           (* First request, so send a query packet *)
           output_probe t ip >>= fun () ->
           Lwt.choose [ (response >>= fun _ -> Lwt.return `Ok);
-                       (Lwt_unix.sleep probe_repeat_delay >>= fun () -> Lwt.return `Timeout) ] >>= function
+                       (Time.sleep probe_repeat_delay >>= fun () -> Lwt.return `Timeout) ] >>= function
           | `Ok -> Lwt.return_unit
           | `Timeout ->
             (* TODO: track the retry number in Irmin as well *)
