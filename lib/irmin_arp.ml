@@ -96,6 +96,17 @@ module Arp = struct
       cache: cache
     } 
 
+    type id = t
+    type result = [ `Ok of Macaddr.t | `Timeout ]
+    type ipaddr = Ipaddr.V4.t
+    type buffer = Cstruct.t
+    type 'a io = 'a Lwt.t
+    type error = [ `Unknown of string ]
+
+    let prettyprint t = "" (* TODO: do something nicer *)
+
+    let disconnect t = Lwt.return_unit (* TODO: kill tick somehow *)
+
     let (>>=) = Lwt.bind
 
     let arp_timeout = 60. (* age entries out of cache after this many seconds *)

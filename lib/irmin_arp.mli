@@ -18,15 +18,6 @@ module Arp : sig
   module Make (Ethif : V1_LWT.ETHIF) (Clock: V1.CLOCK) (Time: V1_LWT.TIME) 
       (Maker : Irmin.S_MAKER) :
   sig
-
-    type t
-
-    val create : Ethif.t -> Irmin.config -> t Lwt.t
-    val set_ips: t -> Ipaddr.V4.t list -> t Lwt.t
-    val get_ips: t -> Ipaddr.V4.t list
-    val remove_ip: t -> Ipaddr.V4.t -> t Lwt.t
-    val input: t -> Cstruct.t -> unit Lwt.t
-    val query: t -> Ipaddr.V4.t -> [ `Ok of Macaddr.t | `Timeout ] Lwt.t
-
+    include V1_LWT.ARP
   end
 end
