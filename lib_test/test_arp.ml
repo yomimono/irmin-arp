@@ -26,7 +26,7 @@ let get_arp ?(backend = B.create ()) ~root () =
   or_error "ethif" E.connect netif >>= fun ethif ->
   let config = Irmin_storer_fs.config ~root () in
   clear_cache config >>= fun () ->
-  A_fs.create ethif config >>= fun a ->
+  A_fs.connect ethif config >>= fun a ->
   Lwt.return (backend, netif, ethif, a)
 
 (* a few arbitrary addresses for convenience *)
@@ -78,7 +78,7 @@ let set_ips () =
    are supposed to emit GARP packets; we should 
    generalize this test for use in other functions *)
   let do_fn () =
-    A_fs.set_ips a [ first_ip ] >>= fun a ->
+    A_fs.set_ips a [ first_ip ] >>= fun () ->
     OUnit.assert_equal [ first_ip ] (A_fs.get_ips a);
     Lwt.return_unit
   in
@@ -96,9 +96,9 @@ let set_ips () =
   in
   timeout_or ~timeout:0.1 ~msg:"100ms timeout exceeded before listen_fn returned"
     listen_netif do_fn listen_fn >>= fun () ->
-  A_fs.set_ips a [] >>= fun a ->
+  A_fs.set_ips a [] >>= fun () ->
   OUnit.assert_equal [] (A_fs.get_ips a);
-  A_fs.set_ips a [ first_ip; Ipaddr.V4.of_string_exn "10.20.1.1" ] >>= fun a ->
+  A_fs.set_ips a [ first_ip; Ipaddr.V4.of_string_exn "10.20.1.1" ] >>= fun () ->
   OUnit.assert_equal [ first_ip; Ipaddr.V4.of_string_exn "10.20.1.1" ] (A_fs.get_ips
                                                                        a);
   Lwt.return_unit
@@ -106,14 +106,14 @@ let set_ips () =
 let get_remove_ips () =
   get_arp ~root:(root ^ "/remove_ips") () >>= fun (backend, _, _, a) ->
   OUnit.assert_equal [] (A_fs.get_ips a);
-  A_fs.set_ips a [ first_ip; first_ip ] >>= fun a ->
+  A_fs.set_ips a [ first_ip; first_ip ] >>= fun () ->
   let ips = A_fs.get_ips a in
   OUnit.assert_equal true (List.mem first_ip ips);
   OUnit.assert_equal true (List.for_all (fun a -> a = first_ip) ips);
   OUnit.assert_equal true (List.length ips >= 1 && List.length ips <= 2);
-  A_fs.remove_ip a first_ip >>= fun a ->
+  A_fs.remove_ip a first_ip >>= fun () ->
   OUnit.assert_equal [] (A_fs.get_ips a);
-  A_fs.remove_ip a first_ip >>= fun a ->
+  A_fs.remove_ip a first_ip >>= fun () ->
   OUnit.assert_equal [] (A_fs.get_ips a);
   Lwt.return_unit
 
@@ -130,7 +130,7 @@ let input_single_reply () =
      other *)
   timeout_or ~timeout:0.1 ~msg:"Nothing received by listen_netif when trying to
   do single reply test"
-    listen_netif (fun () -> A_fs.set_ips speak_arp [ first_ip ] >>= fun _a -> Lwt.return_unit)
+    listen_netif (fun () -> A_fs.set_ips speak_arp [ first_ip ] )
     (fun () -> fun buf -> A_fs.input listen_arp buf >>= fun () -> V.disconnect listen_netif)
   >>= fun () ->
   (* load our own representation of the ARP cache of the listener *)
@@ -156,15 +156,15 @@ let input_changed_ip () =
   let backend = B.create () in
   or_error "backend" V.connect backend >>= fun speak_netif ->
   or_error "ethif" E.connect speak_netif >>= fun speak_ethif ->
-  A_fs.create speak_ethif speak_config >>= fun speak_arp ->
+  A_fs.connect speak_ethif speak_config >>= fun speak_arp ->
   or_error "backend" V.connect backend >>= fun listen_netif ->
   or_error "ethif" E.connect listen_netif >>= fun listen_ethif ->
-  A_fs.create listen_ethif listen_config >>= fun listen_arp ->
+  A_fs.connect listen_ethif listen_config >>= fun listen_arp ->
   let multiple_ips () =
-    A_fs.set_ips speak_arp [ Ipaddr.V4.of_string_exn "10.23.10.1" ] >>= fun speak_arp ->
-    A_fs.set_ips speak_arp [ Ipaddr.V4.of_string_exn "10.50.20.22" ] >>= fun speak_arp ->
-    A_fs.set_ips speak_arp [ Ipaddr.V4.of_string_exn "10.20.254.2" ] >>= fun speak_arp ->
-    A_fs.set_ips speak_arp [ first_ip ] >>= fun speak_arp ->
+    A_fs.set_ips speak_arp [ Ipaddr.V4.of_string_exn "10.23.10.1" ] >>= fun () ->
+    A_fs.set_ips speak_arp [ Ipaddr.V4.of_string_exn "10.50.20.22" ] >>= fun () ->
+    A_fs.set_ips speak_arp [ Ipaddr.V4.of_string_exn "10.20.254.2" ] >>= fun () ->
+    A_fs.set_ips speak_arp [ first_ip ] >>= fun () ->
     Lwt_unix.sleep 0.1 >>= fun () -> V.disconnect listen_netif >>= fun () ->
     Lwt.return_unit
   in
@@ -198,8 +198,8 @@ let input_garbage () =
   or_error "backend" V.connect backend >>= fun speak_netif ->
   or_error "backend" V.connect backend >>= fun listen_netif ->
   or_error "ethif" E.connect listen_netif >>= fun listen_ethif ->
-  A_fs.create listen_ethif listen_config >>= fun listen_arp ->
-  A_fs.set_ips listen_arp [ first_ip ] >>= fun listen_arp ->
+  A_fs.connect listen_ethif listen_config >>= fun listen_arp ->
+  A_fs.set_ips listen_arp [ first_ip ] >>= fun () ->
   let listen_fn () = V.listen listen_netif (E.input ~arpv4:(A_fs.input listen_arp)
       ~ipv4:(fun buf -> Lwt.return_unit) ~ipv6:(fun buf -> Lwt.return_unit)
       listen_ethif)
@@ -285,7 +285,7 @@ let query_with_seeded_cache () =
   let backend = B.create () in
   get_arp ~backend ~root:speak_dir () >>= 
   fun (backend, speak_netif, speak_ethif, speak_arp) ->
-  A_fs.set_ips speak_arp [ first_ip ] >>= fun speak_arp ->
+  A_fs.set_ips speak_arp [ first_ip ] >>= fun () ->
   get_arp ~backend ~root:listen_dir () >>= 
   fun (backend, listen_netif, listen_ethif, listen_arp) ->
   let store = Irmin.basic (module Irmin_backend_fs) (module T) in

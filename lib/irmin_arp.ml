@@ -92,7 +92,8 @@ module Arp = struct
 
     type t = { 
       ethif: Ethif.t;
-      bound_ips: Ipaddr.V4.t list;
+      mutable bound_ips: Ipaddr.V4.t list; 
+      (* mutable for compability with existing ipv4 code :( *)
       cache: cache
     } 
 
@@ -146,7 +147,7 @@ module Arp = struct
     (* TODO: treatment of multicast ethernet address messages differs between
        routers and end hosts; we have no way of knowing which we are without
        taking a setup parameter. *)
-    let create ethif config =
+    let connect ethif config =
       let store = Irmin.basic (module Maker) (module T) in
       Irmin.create store config task >>= fun cache ->
       Irmin.update (cache "Arp.create: Initial empty cache") T.Path.empty T.empty 
@@ -157,14 +158,16 @@ module Arp = struct
 
     let add_ip t ip = 
       match List.mem ip (t.bound_ips) with
-      | true -> Lwt.return t
-      | false -> Lwt.return { t with bound_ips = (ip :: t.bound_ips)}
+      | true -> Lwt.return_unit
+      | false -> t.bound_ips <- (ip :: t.bound_ips); Lwt.return_unit
     let remove_ip t ip =
       match List.mem ip (t.bound_ips) with
-      | false -> Lwt.return t
+      | false -> Lwt.return_unit
       | true -> 
         let is_not_ip other_ip = ((Ipaddr.V4.compare ip other_ip) <> 0) in
-        Lwt.return { t with bound_ips = (List.filter is_not_ip t.bound_ips) }
+        t.bound_ips <- (List.filter is_not_ip t.bound_ips);
+        Lwt.return_unit
+
     let get_ips t = t.bound_ips
 
     (* construct an arp record representing a gratuitious arp announcement for
@@ -245,7 +248,8 @@ module Arp = struct
       (* it would be nice if there were some provision for "uh you really don't
          want to do that, that IP is in the cache already" *)
       Lwt.join (List.map (fun ip -> output t (garp t ip)) ips) >>= fun () ->
-      Lwt.return { t with bound_ips = ips }
+      t.bound_ips <- ips;
+      Lwt.return_unit
 
     (* Query the cache for an ARP entry, which may result in the sender sleeping
        waiting for a response *)
