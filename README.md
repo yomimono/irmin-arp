@@ -10,11 +10,12 @@ The following dependencies are needed from the default opam repository:
 opam install irmin irmin-unix alcotest ezjsonm lwt ipaddr ounit mirage-clock-unix mirage-unix
 ```
 
-Pinned versions of `tcpip` and `mirage-types` are currently required:
+Pinned versions of `tcpip` and `mirage-types` are currently required to run the `irmin-arp` tests.  If you wish to build unikernels using `irmin-arp`, you will also need to pin the `mirage` front-end tool:
 
 ```
-opam pin add mirage https://github.com/yomimono/mirage#separate_arp
+opam pin add mirage-types https://github.com/yomimono/mirage-types#separate_arp
 opam pin add tcpip https://github.com/yomimono/tcpip#separate_arp
+opam pin add mirage https://github.com/yomimono/mirage#separate_arp
 ```
 
 `make` should now conclude successfully; if not, please let me know via a GitHub issue :)

@@ -27,7 +27,7 @@ let clone_update t ~read_msg ~update_msg ~branch_name node fn =
 
 let test_node str = 
   let step = T.Path.Step.of_hum in
-  T.Path.create [(step "test_results"); (step str)]
+  T.Path.create [(step str)]
 
 let readback_works _ctx =
   make_on_disk ~root ~bare:false ()
