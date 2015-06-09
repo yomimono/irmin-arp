@@ -19,6 +19,6 @@ module Arp : sig
       (Maker : Irmin.S_MAKER) :
   sig
     include V1_LWT.ARP
-    val connect : Ethif.t -> Irmin.config -> t io
+    val connect : Ethif.t -> Irmin.config -> [> `Ok of t | `Error of error ] io
   end
 end

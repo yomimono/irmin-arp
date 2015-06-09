@@ -16,11 +16,11 @@ module Arp = struct
       }
 
     let cstruct_of_arp arp =
-      let open Wire_structs.Arpv4_wire in
+      let open Arpv4_wire in
       (* Obtain a buffer to write into *)
       (* note that sizeof_arp includes sizeof_ethernet by what's currently in
            wire_structs.ml *)
-      let buf = Cstruct.create (Wire_structs.Arpv4_wire.sizeof_arp) in
+      let buf = Cstruct.create (Arpv4_wire.sizeof_arp) in
 
       (* Write the ARP packet *)
       let dmac = Macaddr.to_bytes arp.tha in
@@ -48,7 +48,7 @@ module Arp = struct
       buf
 
     let arp_of_cstruct buf = 
-      let open Wire_structs.Arpv4_wire in
+      let open Arpv4_wire in
       let unusable buf =
         (* we only know how to deal with ethernet <-> IPv4 *)
         get_arp_htype buf <> 1 || get_arp_ptype buf <> 0x0800 
@@ -104,7 +104,8 @@ module Arp = struct
     type 'a io = 'a Lwt.t
     type error = [ `Unknown of string ]
 
-    let prettyprint t = "" (* TODO: do something nicer *)
+    let prettyprint t = ""
+    (* TODO: iterate over graph of histories? *)
 
     let disconnect t = Lwt.return_unit (* TODO: kill tick somehow *)
 
@@ -154,7 +155,7 @@ module Arp = struct
       >>= fun () ->
       let t = { ethif; bound_ips = []; cache; } in
       Lwt.async (tick t);
-      Lwt.return t
+      Lwt.return (`Ok t)
 
     let add_ip t ip = 
       match List.mem ip (t.bound_ips) with
@@ -220,7 +221,7 @@ module Arp = struct
     let output_probe t ip = output t (probe t ip)
 
     let rec input t frame =
-      let open Wire_structs.Arpv4_wire in
+      let open Arpv4_wire in
       MProf.Trace.label "arpv4.input";
       match Parse.arp_of_cstruct frame with
       | `Too_short | `Unusable | `Bad_mac _ -> Lwt.return_unit
