@@ -1,7 +1,8 @@
 open Common
-open Lwt
+open Lwt.Infix
 
 module IPV4 = Ipv4.Make(E)(A_fs)
+module TCP = Tcp.Flow.Make(IPV4)(OS.Time)(Clock)(Random)
 
 let netmask = Ipaddr.V4.of_string_exn "255.255.255.128"
 
@@ -22,7 +23,25 @@ let start_ip ip_addr (_c, _b, netif, ethif, arp) =
                                         (Ipaddr.V4.to_string ip_addr))
   | `Ok i ->
     IPV4.set_ip i ip_addr >>= fun () -> IPV4.set_ip_netmask i netmask >>= fun () ->
-    Lwt.return i
+    Lwt.return (netif, ethif, arp, i)
+
+let start_tcp_listener ~port ~fn (netif, ethif, arp, ip) =
+  let chooser = function | n when n = port -> Some fn | _ -> None in
+  (* make tcp *)
+  or_error "tcp" TCP.connect ip >>= fun tcp ->
+  Lwt.async (fun () -> V.listen netif (E.input 
+                    ~ipv6:(fun buf -> Lwt.return_unit)
+                    ~arpv4:(fun buf -> A_fs.input arp buf)
+                    ~ipv4:(
+                      IPV4.input 
+                        ~tcp:(TCP.input tcp ~listeners:chooser)
+                        ~udp:(fun ~src ~dst _buf -> Lwt.return_unit)
+                        ~default:(fun ~proto ~src ~dst _ -> Lwt.return_unit)
+                        ip
+                    )
+                    ethif
+                                      ));
+  Lwt.return (netif, ethif, arp, ip, tcp)
 
 let clients ~backend = 
   let rec intlist s e acc = 
@@ -39,7 +58,24 @@ let clients ~backend =
   arps
 
 let servers ~backend = 
-  ()
+  let ignore_errors fn = function
+    | `Ok q -> fn q
+    | `Error e -> Lwt.return_unit
+    | `Eof -> Lwt.return_unit
+  in
+  let s1_listener flow =
+    (* try echoing, but don't really mind if we fail *)
+    TCP.read flow >>= ignore_errors (fun buf -> 
+        TCP.write flow buf >>= fun _ -> Lwt.return_unit
+      )
+  in
+  let s1 = 
+    get_arp ~backend ~root:(root ^ "/server_1") () >>= start_ip server_1_ip
+  in
+  let s2 = 
+    get_arp ~backend ~root:(root ^ "/server_2") () >>= start_ip server_2_ip 
+  in
+  (s1, s2)
 
 let () =
   let backend = B.create () in
