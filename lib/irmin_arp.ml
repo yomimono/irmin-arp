@@ -90,21 +90,23 @@ module Arp = struct
     module I = Irmin.Basic (Maker) (T)
     type cache = (string -> ([ `BC ], T.Path.t, T.t) Irmin.t)
 
-    type t = { 
-      ethif: Ethif.t;
-      mutable bound_ips: Ipaddr.V4.t list; 
-      (* mutable for compability with existing ipv4 code :( *)
-      node: T.Path.t;
-      cache: cache;
-    } 
-
-    type id = t
     type result = [ `Ok of Macaddr.t | `Timeout ]
     type ipaddr = Ipaddr.V4.t
     type buffer = Cstruct.t
-    type macaddr = Macaddr.t
     type 'a io = 'a Lwt.t
     type error = [ `Unknown of string ]
+
+    type t = { 
+      ethif: Ethif.t;
+      mutable bound_ips: ipaddr list; 
+      (* mutable for compability with existing ipv4 code :( *)
+      node: T.Path.t;
+      pending: (ipaddr, result Lwt.u) Hashtbl.t;
+      (* use a hashtable, since everything else in here is mutable :( *)
+      cache: cache
+    } 
+
+    type id = t
 
     let (>>=) = Lwt.bind
 
@@ -159,27 +161,37 @@ module Arp = struct
       Irmin.create store config task >>= fun cache ->
       Irmin.update (cache "Arp.create: Initial empty cache") node T.empty 
       >>= fun () ->
-      let t = { ethif; bound_ips = []; node; cache; } in
+      let t = { ethif; bound_ips = []; node; cache; pending = Hashtbl.create 4 } in
       Lwt.async (tick t);
       Lwt.return (`Ok t)
+
+    (* construct an arp record representing a gratuitious arp announcement for
+       ip *)
+    let garp t ip = Parse.garp (Ethif.mac t.ethif) ip
+
+    let output t arp =
+      Ethif.write t.ethif (Parse.cstruct_of_arp arp)
+
+    let set_ips t ips = 
+      (* it would be nice if there were some provision for "uh you really don't
+         want to do that, that IP is in the cache already" *)
+      Lwt.join (List.map (fun ip -> output t (garp t ip)) ips) >>= fun () ->
+      t.bound_ips <- ips;
+      Lwt.return_unit
 
     let add_ip t ip = 
       match List.mem ip (t.bound_ips) with
       | true -> Lwt.return_unit
-      | false -> t.bound_ips <- (ip :: t.bound_ips); Lwt.return_unit
+      | false -> set_ips t (ip :: t.bound_ips)
+
     let remove_ip t ip =
       match List.mem ip (t.bound_ips) with
       | false -> Lwt.return_unit
       | true -> 
         let is_not_ip other_ip = ((Ipaddr.V4.compare ip other_ip) <> 0) in
-        t.bound_ips <- (List.filter is_not_ip t.bound_ips);
-        Lwt.return_unit
+        set_ips t (List.filter is_not_ip t.bound_ips)
 
     let get_ips t = t.bound_ips
-
-    (* construct an arp record representing a gratuitious arp announcement for
-       ip *)
-    let garp t ip = Parse.garp (Ethif.mac t.ethif) ip
 
     let notify t ip mac =
       let now = Clock.time () in
@@ -187,16 +199,17 @@ module Arp = struct
       try
         Irmin.read_exn (t.cache "lookup") t.node
         >>= fun table ->
-        match T.find ip table with
-        | Entry.Pending (_, w) ->
+        match Hashtbl.mem t.pending ip with
+        | true ->
+          let w = Hashtbl.find t.pending ip in
           let str = "entry resolved: " ^ Ipaddr.V4.to_string ip ^ " -> " ^
                     Macaddr.to_string mac in
+          Printf.printf "%s\n%!" str;
           let updated = T.add ip (Entry.Confirmed (expire, mac)) table in
-          Irmin.update (t.cache str) t.node updated >>= fun
-            () ->
+          Irmin.update (t.cache str) t.node updated >>= fun () ->
           Lwt.wakeup w (`Ok mac);
           Lwt.return_unit
-        | Entry.Confirmed _ ->
+        | false -> 
           let str = "entry updated: " ^ Ipaddr.V4.to_string ip ^ " -> " ^
                     Macaddr.to_string mac in
           let updated = T.add ip (Entry.Confirmed (expire, mac)) table in
@@ -209,12 +222,8 @@ module Arp = struct
                   Macaddr.to_string mac in
         Irmin.read_exn (t.cache "lookup") t.node >>= fun table ->
         let updated = T.add ip (Entry.Confirmed (expire, mac)) table in
-        Irmin.update (t.cache str) t.node updated >>= fun
-          () ->
+        Irmin.update (t.cache str) t.node updated >>= fun () ->
         Lwt.return_unit
-
-    let output t arp =
-      Ethif.write t.ethif (Parse.cstruct_of_arp arp)
 
     let probe t ip =
       let source_ip = match t.bound_ips with
@@ -251,13 +260,6 @@ module Arp = struct
                   no action, effectively discarding the packet *)
           Lwt.return_unit
 
-    let set_ips t ips = 
-      (* it would be nice if there were some provision for "uh you really don't
-         want to do that, that IP is in the cache already" *)
-      Lwt.join (List.map (fun ip -> output t (garp t ip)) ips) >>= fun () ->
-      t.bound_ips <- ips;
-      Lwt.return_unit
-
     (* Query the cache for an ARP entry, which may result in the sender sleeping
        waiting for a response *)
     let query t ip =
@@ -272,7 +274,6 @@ module Arp = struct
       with
       | Not_found ->
         let response, waker = MProf.Trace.named_wait "ARP response" in
-        (* printf "ARP query: %s -> [probe]\n%!" (Ipaddr.V4.to_string ip); *)
         let str = Printf.sprintf "Arp.query: query thread launched for ip %s"
             (Ipaddr.V4.to_string ip) in
         Irmin.clone_force task (t.cache str) "query_new" >>= fun our_branch ->
@@ -280,6 +281,7 @@ module Arp = struct
         let updated = T.add ip (Pending (response, waker)) table in
         Irmin.update (our_branch str) t.node updated >>= fun () ->
         Irmin.merge_exn str our_branch ~into:t.cache >>= fun () ->
+        Hashtbl.add (t.pending) ip waker;
         let rec retry n () =
           (* First request, so send a query packet *)
           output_probe t ip >>= fun () ->
@@ -294,6 +296,7 @@ module Arp = struct
             end else begin
               let str = Printf.sprintf "Arp.query: query thread timed out for ip %s"
                   (Ipaddr.V4.to_string ip) in
+              Hashtbl.remove (t.pending) ip;
               Irmin.clone_force task (t.cache str) "query_timeout" >>= fun our_branch ->
               Irmin.read_exn (our_branch "Arp.query") t.node >>= fun table ->
               let updated = T.remove ip table in
