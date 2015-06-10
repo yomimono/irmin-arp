@@ -7,11 +7,23 @@ License:     ISC
 Plugins:     META (0.4), DevFiles (0.4)
 BuildTools:  ocamlbuild
 
+Flag demo
+  Description:     true to build network demo
+  Default:         false
+
 Library "irmin-arp"
   Path:            lib/
   Findlibname:     irmin-arp
   Modules:         Irmin_arp, Table, Entry, Key
-  BuildDepends:    irmin, lwt, ipaddr, tcpip, tcpip.ipv4, ezjsonm, mirage-types
+  BuildDepends:    irmin, lwt, ipaddr, tcpip.arpv4, tcpip.ipv4, ezjsonm, mirage-types
+
+Executable demo_network
+  Build$:         flag(demo)
+  Path:           lib_test
+  MainIs:         demo_network.ml
+  CompiledObject: best
+  Install:        false
+  BuildDepends:   irmin, irmin-arp, lwt, irmin.unix, ipaddr, tcpip.ethif, tcpip.ipv4, alcotest, oUnit, mirage-vnetif, mirage-types, mirage-clock-unix, mirage-unix
 
 Executable test_ops
   Build$:         flag(tests)
