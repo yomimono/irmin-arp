@@ -122,6 +122,56 @@ let input_single_garp () =
     Not_found -> OUnit.assert_failure "Expected cache entry not found in
     listener cache map, as read back from Irmin"
 
+let input_multiple_garp () =
+  let root = root ^ "/input_multiple_garp" in
+  let strip = Ipaddr.V4.of_string_exn in
+  let backend = B.create () in
+  get_arp ~backend ~root:(root ^ "/listener") () >>=
+  fun (listen_config, backend, listen_netif, listen_ethif, listen_arp) ->
+  get_arp ~backend ~root:(root ^ "/speaker1") () >>= fun (_, _, n1, _, speaker1) ->
+  get_arp ~backend ~root:(root ^ "/speaker2") () >>= fun (_, _, n2, _, speaker2) ->
+  get_arp ~backend ~root:(root ^ "/speaker3") () >>= fun (_, _, n3, _, speaker3) ->
+  get_arp ~backend ~root:(root ^ "/speaker4") () >>= fun (_, _, n4, _, speaker4) ->
+  get_arp ~backend ~root:(root ^ "/speaker5") () >>= fun (_, _, n5, _, speaker5) ->
+  let multiple_ips () = 
+    A_fs.set_ips speaker1 [ first_ip ] >>= fun () ->
+    A_fs.set_ips speaker2 [ second_ip ] >>= fun () ->
+    A_fs.set_ips speaker3 [ (strip "192.168.3.33") ] >>= fun () ->
+    A_fs.set_ips speaker4 [ (strip "192.168.3.44") ] >>= fun () ->
+    A_fs.set_ips speaker5 [ (strip "192.168.3.255") ] >>= fun () ->
+    OS.Time.sleep 0.2 >>= fun () -> 
+    V.disconnect listen_netif >>= fun () ->
+    Lwt.return_unit
+  in
+  let listen_fn () = V.listen listen_netif (E.input ~arpv4:(A_fs.input listen_arp)
+      ~ipv4:(fun buf -> Lwt.return_unit) ~ipv6:(fun buf -> Lwt.return_unit)
+      listen_ethif)
+  in
+  Lwt.join [ multiple_ips (); listen_fn () ] >>= fun () ->
+  (* load our own representation of the ARP cache of the listener *)
+  let store = Irmin.basic (module Irmin_backend_fs) (module T) in
+  Irmin.create store listen_config Irmin_unix.task >>= fun store ->
+  Irmin.read_exn (store "readback of map") T.Path.empty >>= fun imap ->
+  let confirm map (ip, mac) =
+    try
+      let open Entry in
+      match T.find ip map with
+      | Confirmed (time, entry) -> OUnit.assert_equal ~printer:Macaddr.to_string
+                                     entry mac;
+        Lwt.return_unit
+      | Pending _ -> OUnit.assert_failure "Pending entry when Confirmed expected"
+    with
+      Not_found -> OUnit.assert_failure (Printf.sprintf 
+                     "Expected cache entry %s not found in listener cache map,
+                     as read back from Irmin" (Ipaddr.V4.to_string ip))
+  in
+  confirm imap (first_ip, (V.mac n1)) >>= fun () ->
+  confirm imap (second_ip, (V.mac n2)) >>= fun () ->
+  confirm imap (strip "192.168.3.33", (V.mac n3)) >>= fun () ->
+  confirm imap (strip "192.168.3.44", (V.mac n4)) >>= fun () ->
+  confirm imap (strip "192.168.3.255", (V.mac n5)) >>= fun () ->
+  Lwt.return_unit
+
 let input_single_unicast () =
   (* use on-disk git fs for cache so we can read it back and check it ourselves *)
   let root = root ^ "/input_single_unicast" in
@@ -140,7 +190,7 @@ let input_single_unicast () =
         tpa = second_ip } in
   timeout_or ~timeout:0.1 ~msg:"Nothing received by listen_netif when trying to
   do single unicast reply input test"
-    listen_netif (fun () -> V.write speak_netif for_listener)
+    listen_netif (fun () -> E.write speak_ethif for_listener)
     (fun () -> fun buf -> A_fs.input listen_arp buf >>= fun () -> V.disconnect listen_netif)
   >>= fun () ->
   (* listen_config should have the ARP cache history reflecting the updates send
@@ -397,6 +447,7 @@ let () =
   ] in
   let input = [
     "input_single_garp", `Slow, lwt_run input_single_garp;
+    "input_multiple_garp", `Slow, lwt_run input_multiple_garp;
     "input_single_unicast_reply", `Slow, lwt_run input_single_unicast;
     "input_changed_ip", `Slow, lwt_run input_changed_ip ;
     "input_garbage", `Slow, lwt_run input_garbage
