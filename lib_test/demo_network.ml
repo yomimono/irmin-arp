@@ -18,9 +18,9 @@ let root = "demo_results"
 (* clients whose ips end in 5 make requests to 192.168.252.2 *)
 
 let arp_only_listener netif ethif arp () =
+  let noop = fun _ -> Lwt.return_unit in
   V.listen netif (E.input 
-                    ~ipv6:(fun buf -> Lwt.return_unit)
-                    ~ipv4:(fun buf -> Lwt.return_unit)
+                    ~ipv6:noop ~ipv4:noop
                     ~arpv4:(fun buf -> A_fs.input arp buf)
                     ethif)
 
@@ -91,7 +91,7 @@ let servers ~backend =
   start_server ~root:(root ^ "/server_2") ~ip:server_2_ip >>= fun s2 ->
   Lwt.return (s1, s2)
 
-let converse (_, _, _, _, client_tcp) (_, _, _, server_ip, _) =
+let converse (_, _, _, client_ip, client_tcp) (_, _, _, server_ip, _) =
   (* every second, bother the other end and see whether they have anything to
      say to us *)
   let important_content = Cstruct.of_string "hi I love you I missed you" in
@@ -100,13 +100,18 @@ let converse (_, _, _, _, client_tcp) (_, _, _, server_ip, _) =
     TCP.read flow >>= fun _ -> 
     OS.Time.sleep 1.0 >>= fun () -> pester flow
   in
+  let dest = List.hd (IPV4.get_ip server_ip) in
+  let src = List.hd (IPV4.get_ip client_ip) in
+  Printf.printf "trying connection from %s to %s on port %d\n%!"
+    (Ipaddr.V4.to_string src) (Ipaddr.V4.to_string dest) echo_port;
+
   TCP.create_connection client_tcp (List.hd (IPV4.get_ip server_ip), echo_port)
   >>= function
   | `Error _ -> Lwt.fail (failwith "couldn't establish connection between client and server")
   | `Ok flow -> pester flow
 
 let ok_go () =
-  let backend = B.create () in
+  let backend = B.create ~yield:(Lwt_unix.yield) ~use_async_readers:true () in
   servers ~backend >>= fun (s1, s2) ->
   (* servers are now up and running an echo service on port 443 *)
   clients ~backend >>= fun client_list ->
