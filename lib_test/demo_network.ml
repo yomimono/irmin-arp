@@ -4,7 +4,7 @@ open Lwt.Infix
 module IPV4 = Ipv4.Make(E)(A_fs)
 module TCP = Tcp.Flow.Make(IPV4)(OS.Time)(Clock)(Random)
 
-let netmask = Ipaddr.V4.of_string_exn "255.255.255.128"
+let netmask = Ipaddr.V4.of_string_exn "255.255.255.0"
 
 let server_1_ip = Ipaddr.V4.of_string_exn "192.168.252.1"
 let server_2_ip = Ipaddr.V4.of_string_exn "192.168.252.2"
@@ -30,13 +30,14 @@ let start_ip ip_addr (_c, _b, netif, ethif, arp) =
                                         (Ipaddr.V4.to_string ip_addr))
   | `Ok i ->
     IPV4.set_ip i ip_addr >>= fun () -> IPV4.set_ip_netmask i netmask >>= fun () ->
-    (* start a backgrounded arp listener for each ip *)
-    Lwt.async (arp_only_listener netif ethif arp);
     Lwt.return (netif, ethif, arp, i)
+
+let spawn_arp_listener (netif, ethif, arp, i) =
+  Lwt.async (arp_only_listener netif ethif arp);
+  Lwt.return (netif, ethif, arp, i)
 
 let start_tcp_listener ~port ~fn (netif, ethif, arp, ip) =
   let chooser = function | n when n = port -> Some fn | _ -> None in
-  (* make tcp *)
   or_error "tcp" TCP.connect ip >>= fun tcp ->
   Lwt.async (fun () -> V.listen netif (E.input 
                     ~ipv6:(fun buf -> Lwt.return_unit)
@@ -50,6 +51,8 @@ let start_tcp_listener ~port ~fn (netif, ethif, arp, ip) =
                     )
                     ethif
                                       ));
+  Printf.printf "%s listening on port %d\n%!" 
+    (Ipaddr.V4.to_string (List.hd (IPV4.get_ip ip))) port;
   Lwt.return (netif, ethif, arp, ip, tcp)
 
 let clients ~backend = 
@@ -66,7 +69,8 @@ let clients ~backend =
   in
   let arps = Lwt_list.map_p
       (fun ip -> 
-         get_arp ~backend ~root:(name_repo ip) () >>= start_ip ip >>= start_tcp
+         get_arp ~backend ~root:(name_repo ip) () >>= start_ip ip >>=
+         spawn_arp_listener >>= start_tcp
       ) ips
   in
   arps
@@ -93,7 +97,7 @@ let servers ~backend =
 
 let converse (_, _, _, client_ip, client_tcp) (_, _, _, server_ip, _) =
   (* every second, bother the other end and see whether they have anything to
-     say to us *)
+     say back to us *)
   let important_content = Cstruct.of_string "hi I love you I missed you" in
   let rec pester flow =
     TCP.write flow important_content >>= fun _ -> 
