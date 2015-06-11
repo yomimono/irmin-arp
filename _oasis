@@ -23,7 +23,7 @@ Executable demo_network
   MainIs:         demo_network.ml
   CompiledObject: best
   Install:        false
-  BuildDepends:   irmin, irmin-arp, lwt, irmin.unix, ipaddr, tcpip.ethif, tcpip.ipv4, tcpip.tcp, alcotest, oUnit, mirage-vnetif, mirage-types, mirage-clock-unix, mirage-unix
+  BuildDepends:   irmin, irmin-arp, lwt, irmin.unix, ipaddr, tcpip.ethif, tcpip.ipv4, tcpip.tcp, alcotest, oUnit, mirage-vnetif, mirage-types, mirage-clock-unix, mirage-unix, mirage-profile.unix, mirage-profile, cstruct
 
 Executable test_ops
   Build$:         flag(tests)

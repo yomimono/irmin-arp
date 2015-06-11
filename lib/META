@@ -1,8 +1,8 @@
 # OASIS_START
-# DO NOT EDIT (digest: b61707f3b367c4f6f96d41c9a9312e19)
+# DO NOT EDIT (digest: d681c6f253bf8aa568c6335c5039f73e)
 version = "0.0.1"
 description = "you know what arp caches need?  dvcs."
-requires = "irmin lwt ipaddr tcpip tcpip.ipv4 ezjsonm mirage-types"
+requires = "irmin lwt ipaddr tcpip.arpv4 tcpip.ipv4 ezjsonm mirage-types"
 archive(byte) = "irmin-arp.cma"
 archive(byte, plugin) = "irmin-arp.cma"
 archive(native) = "irmin-arp.cmxa"
