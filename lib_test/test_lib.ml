@@ -16,9 +16,6 @@ let ip3, mac3, time3 = parse ip3_str mac3_str 2.0
 let sample_table () =
   let m = Ipv4_map.singleton ip1 (confirm time1 mac1) in
   let m = Ipv4_map.add ip2 (confirm time2 mac2) m in
-  let m = 
-    let noop = Lwt.task () in
-    Ipv4_map.add ip3 (Entry.make_pending noop) m in
   m
 
 let assert_in m k =
@@ -27,11 +24,6 @@ let assert_in m k =
 let assert_resolves m k v =
   assert_in m k;
   OUnit.assert_equal ~printer:Entry.to_string v (Ipv4_map.find k m)
-let assert_pending m k =
-  assert_in m k;
-  OUnit.assert_equal ~msg:"asserting pending status of key's value fails" 
-    ~printer:string_of_bool true
-    (Entry.is_pending (Ipv4_map.find k m)) 
 let assert_absent m k =
   OUnit.assert_equal ~msg:"asserting absence of key fails" 
     ~printer:string_of_bool false (Ipv4_map.mem k m)

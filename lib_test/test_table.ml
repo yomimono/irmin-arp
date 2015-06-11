@@ -42,10 +42,6 @@ let readback_works make_fn () =
       ~readback_msg:"readback_works: readback of initial map" node >>= fun m ->
   assert_resolves m ip1 (confirm time1 mac1);
   assert_resolves m ip2 (confirm time2 mac2);
-  (* TODO: these tests will only pass for in-memory storage backend;
-     serializing and deserializing destroys the thread references in pending nodes *)
-  (* assert_pending m ip3; *)
-  (* OUnit.assert_equal m map; *)
   Irmin.remove (t "readback_works: test succeeded; removing data") node >>= fun
     () ->
   return_unit
@@ -91,10 +87,6 @@ let simple_update_works make_fn () =
     (* check contents *)
     assert_resolves new_m_from_t ip2 (confirm time2 mac2);
     assert_absent new_m_from_t ip1;
-    (* overall equality test and pending node test are invalid when
-       deserializing *)
-    (* assert_pending new_m_from_t ip3; *)
-    (* OUnit.assert_equal new_m_from_t m; *)
     Irmin.remove (t "simple_update: test succeeded; removing data") node >>= fun
       () ->
     return_unit
@@ -148,13 +140,7 @@ let merge_conflicts_solved make_fn () =
 let check_map_contents ~serialization map =
   assert_resolves map ip1 (confirm time3 mac1);
   assert_resolves map ip2 (confirm time2 mac2);
-  if serialization then 
-    OUnit.assert_equal ~printer:string_of_int 2 (Ipv4_map.cardinal map)
-  else
-    begin
-      assert_pending map ip3;
-      OUnit.assert_equal ~printer:string_of_int 3 (Ipv4_map.cardinal map)
-    end 
+  OUnit.assert_equal ~printer:string_of_int 2 (Ipv4_map.cardinal map)
 
 let remove_expired branch node =
   Irmin.read_exn (branch "read map") node >>= fun map ->

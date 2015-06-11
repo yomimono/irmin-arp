@@ -179,8 +179,6 @@ let input_single_garp () =
     | Confirmed (time, entry) -> OUnit.assert_equal ~printer:Macaddr.to_string
                                    entry (V.mac speak.netif);
       Lwt.return_unit
-    | Pending _ -> OUnit.assert_failure "Pending entry for an entry that had a
-  GARP emitted on the same vnetif backend"
   with
     Not_found -> OUnit.assert_failure "Expected cache entry not found in
     listener cache map, as read back from Irmin"
@@ -221,7 +219,6 @@ let input_multiple_garp () =
       | Confirmed (time, entry) -> OUnit.assert_equal ~printer:Macaddr.to_string
                                      entry mac;
         Lwt.return_unit
-      | Pending _ -> OUnit.assert_failure "Pending entry when Confirmed expected"
     with
       Not_found -> OUnit.assert_failure (Printf.sprintf 
                      "Expected cache entry %s not found in listener cache map,
@@ -264,8 +261,6 @@ let input_single_unicast () =
     match T.find first_ip map with
     | Confirmed (time, entry) -> OUnit.assert_equal entry (V.mac speak.netif);
       Lwt.return_unit
-    | Pending _ -> OUnit.assert_failure "Pending entry for an entry that had a
-  unicast reply emitted on the same vnetif backend"
   with
     Not_found -> OUnit.assert_failure "Expected cache entry not found in
     listener cache map, as read back from Irmin"
@@ -299,8 +294,6 @@ let input_changed_ip () =
     match T.find first_ip map with
     | Confirmed (time, entry) -> OUnit.assert_equal entry (V.mac speak.netif);
       Lwt.return_unit
-    | Pending _ -> OUnit.assert_failure "Pending entry for an entry that had a
-  GARP emitted on the same vnetif backend"
   with
     Not_found -> OUnit.assert_failure "Expected cache entry not found in
     listener cache map, as read back from Irmin"

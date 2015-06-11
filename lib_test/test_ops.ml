@@ -34,10 +34,9 @@ let write_populated_map () =
   let json = T.Ops.to_json map in
   let delicious_innards = Ezjsonm.get_dict json in
   (* should have an entry for each ip *)
-  OUnit.assert_equal ~printer:string_of_int 3 (List.length delicious_innards);
+  OUnit.assert_equal ~printer:string_of_int 2 (List.length delicious_innards);
   OUnit.assert_equal true (Ezjsonm.mem json [ip1_str]);
-  OUnit.assert_equal true (Ezjsonm.mem json [ip2_str]);
-  OUnit.assert_equal true (Ezjsonm.mem json [ip3_str])
+  OUnit.assert_equal true (Ezjsonm.mem json [ip2_str])
 
 let valify mac time = 
   Ezjsonm.dict [ ("mac", (Ezjsonm.string mac));
@@ -95,12 +94,9 @@ let larger () =
 
 let entry_values () =
   let p = sample_table () in
-  let noop = Lwt.task () in
   (* p will have time == 1.5 *)
   let q = Ipv4_map.add ip2 (confirm 2.0 mac2) p in
-  let r = Ipv4_map.add ip2 (Entry.make_pending noop) p in
-  OUnit.assert_equal ~printer:string_of_int (-1) (T.Ops.compare p q);
-  OUnit.assert_equal ~printer:string_of_int 1 (T.Ops.compare p r)
+  OUnit.assert_equal ~printer:string_of_int (-1) (T.Ops.compare p q)
 
 let equal_things_equal_size () = 
   let p = Ipv4_map.empty in
