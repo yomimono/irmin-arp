@@ -199,10 +199,8 @@ module Arp = struct
           let w = Hashtbl.find t.pending ip in
           let str = "entry resolved: " ^ Ipaddr.V4.to_string ip ^ " -> " ^
                     Macaddr.to_string mac in
-          Printf.printf "%s\n%!" str;
           let updated = T.add ip (Entry.Confirmed (expire, mac)) table in
           Irmin.update (t.cache str) T.Path.empty updated >>= fun () ->
-          Printf.printf "updated cache! notifying waiter...\n%!";
           Lwt.wakeup w (`Ok mac);
           Lwt.return_unit
         | false -> 
@@ -216,7 +214,6 @@ module Arp = struct
       | Not_found ->
         let str = "entry added: " ^ Ipaddr.V4.to_string ip ^ " -> " ^
                   Macaddr.to_string mac in
-        Printf.printf "%s: %s\n%!" (Ipaddr.V4.to_string (List.hd t.bound_ips)) str;
         Irmin.read_exn (t.cache "lookup") T.Path.empty >>= fun table ->
         let updated = T.add ip (Entry.Confirmed (expire, mac)) table in
         Irmin.update (t.cache str) T.Path.empty updated >>= fun () ->
@@ -266,18 +263,12 @@ module Arp = struct
       >>= fun table ->
       try
         match T.find ip table with
-        | Pending (t, _) -> t
         | Confirmed (_, mac) -> Lwt.return (`Ok mac)
       with
       | Not_found ->
         let response, waker = MProf.Trace.named_wait "ARP response" in
         let str = Printf.sprintf "Arp.query: query thread launched for ip %s"
             (Ipaddr.V4.to_string ip) in
-        Irmin.clone_force task (t.cache str) "query_new" >>= fun our_branch ->
-        Irmin.read_exn (our_branch "Arp.query") T.Path.empty >>= fun table ->
-        let updated = T.add ip (Pending (response, waker)) table in
-        Irmin.update (our_branch str) T.Path.empty updated >>= fun () ->
-        Irmin.merge_exn str our_branch ~into:t.cache >>= fun () ->
         Hashtbl.add (t.pending) ip waker;
         let rec retry n () =
           (* First request, so send a query packet *)
