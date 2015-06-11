@@ -194,12 +194,14 @@ let input_multiple_garp () =
   get_arp ~backend ~root ~node:"speaker4" () >>= fun speaker4 ->
   get_arp ~backend ~root ~node:"speaker5" () >>= fun speaker5 ->
   let multiple_ips () = 
-    A_fs.set_ips speaker1.arp [ first_ip ] >>= fun () ->
-    A_fs.set_ips speaker2.arp [ second_ip ] >>= fun () ->
-    A_fs.set_ips speaker3.arp [ (strip "192.168.3.33") ] >>= fun () ->
-    A_fs.set_ips speaker4.arp [ (strip "192.168.3.44") ] >>= fun () ->
-    A_fs.set_ips speaker5.arp [ (strip "192.168.3.255") ] >>= fun () ->
-    Fast_time.sleep 0.2 >>= fun () -> 
+    Lwt.join [
+    A_fs.set_ips speaker1.arp [ first_ip ];
+    A_fs.set_ips speaker2.arp [ second_ip ];
+    A_fs.set_ips speaker3.arp [ (strip "192.168.3.33") ];
+    A_fs.set_ips speaker4.arp [ (strip "192.168.3.44") ];
+    A_fs.set_ips speaker5.arp [ (strip "192.168.3.255") ];
+    ] >>= fun () ->
+    OS.Time.sleep 0.2 >>= fun () -> 
     V.disconnect listen.netif >>= fun () ->
     Lwt.return_unit
   in
