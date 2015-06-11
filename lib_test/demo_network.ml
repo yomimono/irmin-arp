@@ -17,6 +17,8 @@ let root = "demo_results"
 (* clients whose ips end in 0 make requests to 192.168.252.1 *)
 (* clients whose ips end in 5 make requests to 192.168.252.2 *)
 
+let strip = Ipaddr.V4.to_string
+
 let arp_only_listener netif ethif arp () =
   let noop = fun _ -> Lwt.return_unit in
   V.listen netif (E.input 
@@ -38,8 +40,11 @@ let spawn_arp_listener (netif, ethif, arp, i) =
 
 let start_tcp_listener ~port ~fn (netif, ethif, arp, ip) =
   let chooser = function | n when n = port -> Some fn | _ -> None in
+  let name = Printf.sprintf "tcp listener %s" (strip (List.hd (IPV4.get_ip ip))) in
   or_error "tcp" TCP.connect ip >>= fun tcp ->
-  Lwt.async (fun () -> V.listen netif (E.input 
+  let listener = (
+        MProf.Trace.label name;
+        V.listen netif (E.input 
                     ~ipv6:(fun buf -> Lwt.return_unit)
                     ~arpv4:(fun buf -> A_fs.input arp buf)
                     ~ipv4:(
@@ -49,11 +54,8 @@ let start_tcp_listener ~port ~fn (netif, ethif, arp, ip) =
                         ~default:(fun ~proto ~src ~dst _ -> Lwt.return_unit)
                         ip
                     )
-                    ethif
-                                      ));
-  Printf.printf "%s listening on port %d\n%!" 
-    (Ipaddr.V4.to_string (List.hd (IPV4.get_ip ip))) port;
-  Lwt.return (netif, ethif, arp, ip, tcp)
+                    ethif ) ) in
+  Lwt.return (netif, ethif, arp, ip, tcp, listener)
 
 let clients ~backend = 
   let rec intlist s e acc = 
@@ -62,7 +64,7 @@ let clients ~backend =
   let our_ip base offset = 
       Ipaddr.V4.of_int32 Int32.(add base (of_int offset))
   in
-  let ips = List.map (fun number -> our_ip base number) (intlist 3 60 []) in
+  let ips = List.map (fun number -> our_ip base number) (intlist 3 3 []) in
   let name_repo ip = Printf.sprintf "%s/client_%s" root (Ipaddr.V4.to_string ip) in
   let start_tcp (n, e, a, ip) =
     or_error "tcp" TCP.connect ip >>= fun tcp -> Lwt.return (n, e, a, ip, tcp)
@@ -95,7 +97,7 @@ let servers ~backend =
   start_server ~root:(root ^ "/server_2") ~ip:server_2_ip >>= fun s2 ->
   Lwt.return (s1, s2)
 
-let converse (_, _, _, client_ip, client_tcp) (_, _, _, server_ip, _) =
+let converse (_, _, _, client_ip, client_tcp) (_, _, _, server_ip, _, _) =
   (* every second, bother the other end and see whether they have anything to
      say back to us *)
   let important_content = Cstruct.of_string "hi I love you I missed you" in
@@ -115,11 +117,20 @@ let converse (_, _, _, client_ip, client_tcp) (_, _, _, server_ip, _) =
   | `Ok flow -> pester flow
 
 let ok_go () =
-  let backend = B.create ~yield:(Lwt_unix.yield) ~use_async_readers:true () in
+  let buffer = MProf_unix.mmap_buffer ~size:1000000 "demo_network_trace.ctf" in
+  let trace_config = MProf.Trace.Control.make buffer MProf_unix.timestamper in
+  MProf.Trace.Control.start trace_config;
+  let backend = B.create ~yield:(fun () -> Lwt_main.yield ()) ~use_async_readers:true () in
+  let get_listener (_, _, _, _, _, listener) = listener in
   servers ~backend >>= fun (s1, s2) ->
-  (* servers are now up and running an echo service on port 443 *)
+  (* last entry of servers is a listener for inclusion in Lwt.join *)
   clients ~backend >>= fun client_list ->
   (* clients are now up and running ARP listeners *)
-  converse (List.hd client_list) s1 >>= fun _ -> Lwt.return_unit
+  Lwt.choose [
+    get_listener s1;
+    get_listener s2;
+    converse (List.hd client_list) s1 
+  ] >>= fun _ -> Lwt.return_unit
 
-let () = Lwt_main.run (ok_go ())
+let () = 
+  Lwt_main.run (ok_go ())
