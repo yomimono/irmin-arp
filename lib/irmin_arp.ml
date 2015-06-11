@@ -267,8 +267,6 @@ module Arp = struct
       with
       | Not_found ->
         let response, waker = MProf.Trace.named_wait "ARP response" in
-        let str = Printf.sprintf "Arp.query: query thread launched for ip %s"
-            (Ipaddr.V4.to_string ip) in
         Hashtbl.add (t.pending) ip waker;
         let rec retry n () =
           (* First request, so send a query packet *)
