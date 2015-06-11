@@ -64,7 +64,7 @@ let clients ~backend =
   let our_ip base offset = 
       Ipaddr.V4.of_int32 Int32.(add base (of_int offset))
   in
-  let ips = List.map (fun number -> our_ip base number) (intlist 3 3 []) in
+  let ips = List.map (fun number -> our_ip base number) (intlist 3 60 []) in
   let name_repo ip = Printf.sprintf "%s/client_%s" root (Ipaddr.V4.to_string ip) in
   let start_tcp (n, e, a, ip) =
     or_error "tcp" TCP.connect ip >>= fun tcp -> Lwt.return (n, e, a, ip, tcp)
