@@ -60,7 +60,6 @@ module Make(P: Irmin.Path.S) = struct
   let empty = M.empty
   let expire t now =
     M.filter (fun _ip entry -> match entry with
-        | Entry.Pending _ -> true
         | Entry.Confirmed (time, _) ->
           Printf.printf "time %f > current time %f: %s\n%!" time now
             (string_of_bool (time > now));
