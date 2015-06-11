@@ -191,33 +191,26 @@ module Arp = struct
     let notify t ip mac =
       let now = Clock.time () in
       let expire = now +. arp_timeout in
-      try
-        Irmin.read_exn (t.cache "lookup") T.Path.empty 
-        >>= fun table ->
-        match Hashtbl.mem t.pending ip with
-        | true ->
-          let w = Hashtbl.find t.pending ip in
-          let str = "entry resolved: " ^ Ipaddr.V4.to_string ip ^ " -> " ^
-                    Macaddr.to_string mac in
-          let updated = T.add ip (Entry.Confirmed (expire, mac)) table in
-          Irmin.update (t.cache str) T.Path.empty updated >>= fun () ->
-          Lwt.wakeup w (`Ok mac);
-          Lwt.return_unit
-        | false -> 
-          let str = "entry updated: " ^ Ipaddr.V4.to_string ip ^ " -> " ^
-                    Macaddr.to_string mac in
-          let updated = T.add ip (Entry.Confirmed (expire, mac)) table in
-          Irmin.update (t.cache str) T.Path.empty updated >>= fun
-            () ->
-          Lwt.return_unit
-      with
-      | Not_found ->
-        let str = "entry added: " ^ Ipaddr.V4.to_string ip ^ " -> " ^
+      let tag = (Printf.sprintf "notify_%f" now) in
+      let merge str new_table our_br = 
+        Irmin.update (our_br ("Arp.notify: " ^ str)) T.Path.empty new_table >>= fun () ->
+        Irmin.merge_exn "Arp.notify: merge notify branch" our_br ~into:t.cache
+      in
+      Irmin.clone_force task (t.cache "cloning for update") tag >>= fun our_br ->
+      Irmin.read_exn (our_br "lookup") T.Path.empty >>= fun table ->
+      let updated = T.add ip (Entry.Confirmed (expire, mac)) table in
+      match Hashtbl.mem t.pending ip with
+      | true ->
+        let w = Hashtbl.find t.pending ip in
+        let str = "query answered: " ^ Ipaddr.V4.to_string ip ^ " -> " ^
                   Macaddr.to_string mac in
-        Irmin.read_exn (t.cache "lookup") T.Path.empty >>= fun table ->
-        let updated = T.add ip (Entry.Confirmed (expire, mac)) table in
-        Irmin.update (t.cache str) T.Path.empty updated >>= fun () ->
+        merge str updated our_br >>= fun () ->
+        Lwt.wakeup w (`Ok mac);
         Lwt.return_unit
+      | false -> 
+        let str = "gratuitous arp: " ^ Ipaddr.V4.to_string ip ^ " -> " ^
+                  Macaddr.to_string mac in
+        merge str updated our_br
 
     let probe t ip =
       let source_ip = match t.bound_ips with
