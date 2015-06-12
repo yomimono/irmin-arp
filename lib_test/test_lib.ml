@@ -19,8 +19,9 @@ let sample_table () =
   m
 
 let assert_in m k =
-  OUnit.assert_equal ~msg:"asserting presence of key fails"
-    ~printer:string_of_bool true (Ipv4_map.mem k m)
+  let msg = Printf.sprintf "asserting presence of key %s fails"
+                              (Ipaddr.V4.to_string k) in
+  OUnit.assert_equal ~msg ~printer:string_of_bool true (Ipv4_map.mem k m)
 let assert_resolves m k v =
   assert_in m k;
   OUnit.assert_equal ~printer:Entry.to_string v (Ipv4_map.find k m)
