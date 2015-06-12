@@ -117,7 +117,7 @@ let merge_conflicts_solved _ctx =
   >>= fun exp_branch ->
   (* both branches (expired_removed, pending_resolved) should now be written
      into Irmin store *)
-  (* try merging first one, then the other, into master (t) *)
+  (* try merging first one, then the other, into primary branch (t) *)
   Irmin.merge_exn "merge_conflicts_difft_nodes: pending_resolved -> master" 
     pend_branch ~into:t >>= fun () ->
   Irmin.merge_exn "merge_conflicts_difft_nodes: expired_removed -> master" 
