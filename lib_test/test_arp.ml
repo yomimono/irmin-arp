@@ -10,6 +10,11 @@ let send_buf_sleep_then_dc speak_netif listen_netif bufs () =
   Lwt_unix.sleep 0.1 >>= fun () ->
   V.disconnect listen_netif
 
+let zero_cstruct cs =
+  let zero c = Cstruct.set_char c 0 '\000' in
+  let i = Cstruct.iter (fun c -> Some 1) zero cs in
+  Cstruct.fold (fun b a -> b) i cs
+
 let create_is_consistent () =
   (* Arp.create returns something bearing resemblance to an Arp.t *)
   (* possibly assert some qualities of a freshly-created ARP interface -- e.g.
@@ -182,15 +187,25 @@ let input_single_unicast () =
   (* send an ARP reply from one side (speak_arp) and make sure it was heard on the
      other *)
   (* in order to package this properly, we need mac details for each netif *)
+  (* we also need to make our own ethernet header, because E.write doesn't slap
+     them on for us (as we might assume it does from having experience with
+     Udp.write, Tcp.write, and Ip.write -- this is gross and probably the next
+     thing to tackle in tcpip... *)
   let for_listener = Irmin_arp.Arp.Parse.cstruct_of_arp
       { Irmin_arp.Arp.op = `Reply; 
         sha = (V.mac speak_netif); 
         tha = (V.mac listen_netif); spa = first_ip;
         tpa = second_ip } in
+  let noop = (fun buf -> Lwt.return_unit) in
+  let listener = E.input
+      ~arpv4:(A_fs.input listen_arp) ~ipv4:noop ~ipv6:noop
+      listen_ethif in
   timeout_or ~timeout:0.1 ~msg:"Nothing received by listen_netif when trying to
   do single unicast reply input test"
     listen_netif (fun () -> E.write speak_ethif for_listener)
-    (fun () -> fun buf -> A_fs.input listen_arp buf >>= fun () -> V.disconnect listen_netif)
+    (fun () -> fun buf -> 
+       listener buf 
+      >>= fun () -> V.disconnect listen_netif)
   >>= fun () ->
   (* listen_config should have the ARP cache history reflecting the updates send
      by speak_arp; a current read should show us first_ip *)
@@ -302,11 +317,6 @@ let parse_zeros () =
      causes that in the underlying Macaddr implementation is being provided a
      string of insufficient size, which we guard against with `Too_short, ergo
      no test to make sure we return `Bad_mac *)
-  let zero_cstruct cs =
-    let zero c = Cstruct.set_char c 0 '\000' in
-    let i = Cstruct.iter (fun c -> Some 1) zero cs in
-    Cstruct.fold (fun b a -> b) i cs
-  in
   let all_zero = zero_cstruct (Cstruct.create
                                  (Arpv4_wire.sizeof_arp)) in
   match Irmin_arp.Arp.Parse.arp_of_cstruct all_zero with
