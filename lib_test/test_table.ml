@@ -20,7 +20,9 @@ let update_and_readback map t ~update_msg ~readback_msg node
   Lwt.return (T.to_map map)
 
 let clone_update t ~read_msg ~update_msg ~branch_name node fn =
-  Irmin.clone_force Irmin_unix.task (t read_msg) branch_name >>= fun branch ->
+  let now = int_of_float (Unix.time ()) in
+  let name = branch_name ^ "-" ^ (string_of_int now) in
+  Irmin.clone_force Irmin_unix.task (t read_msg) name >>= fun branch ->
   fn branch node >>= fun map ->
   Irmin.update (branch update_msg) node (T.of_map map) >>=
   fun () -> Lwt.return branch
@@ -68,7 +70,10 @@ let simple_update_works _ctx =
   (* clone, branch, update, merge *)
   (* use clone_force, since use of persistent storage means there may well
      actually be a historical "age_out" branch *)
-  Irmin.clone_force Irmin_unix.task (t "simple_update: clone original map") "age_out" >>= fun
+  let age_out = Printf.sprintf "age_out-%s" (string_of_int (int_of_float
+                                                              (Unix.time ()))) in
+  Irmin.clone_force Irmin_unix.task (t "simple_update: clone original map")
+    age_out >>= fun
     x -> 
     (* yay, we have a clone; let's modify it! *)
     Irmin.read_exn (x "simple_update: get map from clone") node >>= fun m ->
@@ -137,7 +142,7 @@ let merge_conflicts_solved _ctx =
   assert_resolves map ip2 (confirm time2 mac2);
   assert_resolves map ip3 (confirm time3 mac3);
   OUnit.assert_equal ~printer:string_of_int 2 (Ipv4_map.cardinal map);
-  Irmin.remove (t "merge_conflicts_difft_noeds: test succeeded; removing data")
+  Irmin.remove (t "merge_conflicts_difft_nodes: test succeeded; removing data")
     node >>= fun () ->
   Lwt.return_unit
 
@@ -164,7 +169,7 @@ let update_expired branch node =
 
 let complex_merge_remove_then_update _ctx =
   make_in_memory () >>= fun t ->
-  let node = T.Path.empty in
+  let node = test_node "complex_merge_remove_then_update" in
   let original = T.of_map (sample_table ()) in
   Irmin.update (t "original map") node original >>= fun () ->
   clone_update t ~read_msg:"clone map" ~update_msg:"remove sample_table entries"
@@ -200,6 +205,7 @@ let complex_merge_pairwise () =
   Irmin.merge_exn "merge_pairwise: remove_expired -> master" expire_branch ~into:t >>= fun () ->
   Irmin.read_exn (t "merge_pairwise: final readback") node >>= fun map ->
   check_map_contents ~serialization:true (T.to_map map);
+  Irmin.remove (t "merge_pairwise: test succeeded; removing data") node >>= fun () ->
   Lwt.return_unit
 
 let lwt_run f () = Lwt_main.run (f ())
@@ -215,10 +221,10 @@ let () =
     "simple_update", `Quick, lwt_run simple_update_works;
   ] in
   let merge = [
-    "merge w/divergent nodes", `Quick, lwt_run merge_conflicts_solved;
     "merge w/conflict; remove then update", `Quick, lwt_run complex_merge_remove_then_update;
     "merge w/conflict; both clones, both updates, both merges", `Quick, lwt_run
       complex_merge_pairwise;
+    "merge w/divergent nodes", `Quick, lwt_run merge_conflicts_solved;
   ] in
   Alcotest.run "Irmin_arp" [
     "expire", expire;
