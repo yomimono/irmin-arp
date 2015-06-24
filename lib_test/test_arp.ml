@@ -1,14 +1,70 @@
 open Lwt
 open Common
 
+let time_reduction_factor = 60.
+
+module Fast_clock = struct
+
+  let last_read = ref (Clock.time ())
+
+  (* from mirage/types/V1.mli module type CLOCK *)
+  type tm =
+    { tm_sec: int;               (** Seconds 0..60 *)
+      tm_min: int;               (** Minutes 0..59 *)
+      tm_hour: int;              (** Hours 0..23 *)
+      tm_mday: int;              (** Day of month 1..31 *)
+      tm_mon: int;               (** Month of year 0..11 *)
+      tm_year: int;              (** Year - 1900 *)
+      tm_wday: int;              (** Day of week (Sunday is 0) *)
+      tm_yday: int;              (** Day of year 0..365 *)
+      tm_isdst: bool;            (** Daylight time savings in effect *)
+    }
+
+  let gmtime time = 
+    let tm = Clock.gmtime time in
+    { 
+      tm_sec = tm.Clock.tm_sec;
+      tm_min = tm.Clock.tm_min;
+      tm_hour = tm.Clock.tm_hour;
+      tm_mday = tm.Clock.tm_mday;
+      tm_mon = tm.Clock.tm_mon;
+      tm_year = tm.Clock.tm_year;
+      tm_wday = tm.Clock.tm_wday;
+      tm_yday = tm.Clock.tm_yday;
+      tm_isdst = tm.Clock.tm_isdst;
+    }
+
+  let time () = 
+    let this_time = Clock.time () in
+    let clock_diff = ((this_time -. !last_read) *. time_reduction_factor) in
+    last_read := this_time;
+    this_time +. clock_diff
+
+end
+module Fast_time = struct
+  type 'a io = 'a Lwt.t
+  let sleep time = OS.Time.sleep (time /. time_reduction_factor)
+end
+
+module A_fs = Irmin_arp.Arp.Make(E)(Fast_clock)(Fast_time)(Irmin_backend_fs)
+
 let first_ip = Ipaddr.V4.of_string_exn "192.168.3.1"
 let second_ip = Ipaddr.V4.of_string_exn "192.168.3.10"
 let sample_mac = Macaddr.of_string_exn "10:9a:dd:c0:ff:ee"
 
 let send_buf_sleep_then_dc speak_netif listen_netif bufs () =
   Lwt.join (List.map (V.write speak_netif) bufs) >>= fun () ->
-  Lwt_unix.sleep 0.1 >>= fun () ->
+  Fast_time.sleep 0.1 >>= fun () ->
   V.disconnect listen_netif
+
+let get_arp ?(backend = B.create ()) ~root () =
+  or_error "backend" V.connect backend >>= fun netif ->
+  or_error "ethif" E.connect netif >>= fun ethif ->
+  let config = Irmin_storer_fs.config ~root () in
+  clear_cache config >>= fun () ->
+  A_fs.connect ethif config >>= function
+  | `Ok a -> Lwt.return (config, backend, netif, ethif, a)
+  | `Error e -> OUnit.assert_failure "Couldn't start ARP :("
 
 let create_is_consistent () =
   (* Arp.create returns something bearing resemblance to an Arp.t *)
@@ -40,7 +96,7 @@ let timeout_or ~timeout ~msg listen_netif do_fn listen_fn =
     do_fn ();
     (Lwt.pick [
         V.listen listen_netif (listen_fn ());
-      Lwt_unix.sleep timeout >>= fun () -> OUnit.assert_failure msg
+      OS.Time.sleep timeout >>= fun () -> OUnit.assert_failure msg
     ])
   ]
 
@@ -139,7 +195,7 @@ let input_multiple_garp () =
     A_fs.set_ips speaker3 [ (strip "192.168.3.33") ] >>= fun () ->
     A_fs.set_ips speaker4 [ (strip "192.168.3.44") ] >>= fun () ->
     A_fs.set_ips speaker5 [ (strip "192.168.3.255") ] >>= fun () ->
-    OS.Time.sleep 0.2 >>= fun () -> 
+    Fast_time.sleep 0.2 >>= fun () -> 
     V.disconnect listen_netif >>= fun () ->
     Lwt.return_unit
   in
@@ -222,7 +278,7 @@ let input_changed_ip () =
     A_fs.set_ips speak_arp [ Ipaddr.V4.of_string_exn "10.50.20.22" ] >>= fun () ->
     A_fs.set_ips speak_arp [ Ipaddr.V4.of_string_exn "10.20.254.2" ] >>= fun () ->
     A_fs.set_ips speak_arp [ first_ip ] >>= fun () ->
-    Lwt_unix.sleep 0.1 >>= fun () -> V.disconnect listen_netif >>= fun () ->
+    Fast_time.sleep 0.1 >>= fun () -> V.disconnect listen_netif >>= fun () ->
     Lwt.return_unit
   in
   let listen_fn () = V.listen listen_netif (E.input ~arpv4:(A_fs.input listen_arp)
@@ -389,8 +445,8 @@ let query_sent_with_empty_cache () =
   let listen_fn () =
     fun buf ->
       match Irmin_arp.Arp.Parse.arp_of_cstruct buf with
-      | `Too_short | `Unusable | `Bad_mac _ -> OUnit.assert_failure "Attempting
-                                                 to produce a probe instead
+      | `Too_short | `Unusable | `Bad_mac _ ->
+        OUnit.assert_failure "Attempting to produce a probe instead
                                                  resulted in a strange packet"
       | `Ok arp ->
         let expected_arp = { Irmin_arp.Arp.op = `Request;
@@ -418,7 +474,7 @@ let entries_aged_out () =
     seeded >>= fun () ->
   Irmin.merge_exn "entries_aged_out: merge seeded ARP entry" our_branch
     ~into:store >>= fun () ->
-  Lwt_unix.sleep 65. >>= fun () ->
+  Fast_time.sleep 65. >>= fun () ->
   Irmin.read_exn (store "readback of map") T.Path.empty >>= fun map ->
   OUnit.assert_raises Not_found (fun () -> T.find second_ip map);
   Lwt.return_unit
