@@ -483,21 +483,14 @@ let lwt_run f () = Lwt_main.run (f ())
 
 let () =
   let ip_crud = [
-    "set_ips", `Slow, lwt_run set_ips;
-    "get_remove_ips", `Slow, lwt_run get_remove_ips;
+    "set_ips", `Quick, lwt_run set_ips;
+    "get_remove_ips", `Quick, lwt_run get_remove_ips;
   ] in
   let parse = [
     "parse_zeros", `Quick, lwt_run parse_zeros;
     "parse_unparse", `Quick, lwt_run parse_unparse;
   ] in
   let query = [
-    (*
-       x if an entry is in the cache, query returns it
-       x arp probes are sent for entries not in the cache
-       once a response is received, waiting thread returns response immediately
-       probes are retried
-       entries are aged out
-    *)
     "query_with_seeded_cache", `Slow, lwt_run query_with_seeded_cache;
     "query_sent_with_empty_cache", `Slow, lwt_run query_sent_with_empty_cache;
   ] in
