@@ -1,5 +1,5 @@
 # OASIS_START
-# DO NOT EDIT (digest: f02bcb051f6f80a67d7505553d46db5a)
+# DO NOT EDIT (digest: 18134bb705f9fe6c19a777cb2e9ed5d7)
 # Ignore VCS directories, you can use the same kind of rule outside
 # OASIS_START/STOP if you want to exclude directories that contains
 # useless stuff for the build process
@@ -60,6 +60,7 @@ true: annot, bin_annot
 <lib_test/test_arp.{native,byte}>: pkg_mirage-vnetif
 <lib_test/test_arp.{native,byte}>: pkg_oUnit
 <lib_test/test_arp.{native,byte}>: pkg_tcpip
+<lib_test/test_arp.{native,byte}>: pkg_tcpip.arpv4
 <lib_test/test_arp.{native,byte}>: pkg_tcpip.ethif
 <lib_test/test_arp.{native,byte}>: pkg_tcpip.ipv4
 <lib_test/test_arp.{native,byte}>: use_irmin-arp
@@ -75,6 +76,7 @@ true: annot, bin_annot
 <lib_test/*.ml{,i,y}>: pkg_mirage-vnetif
 <lib_test/*.ml{,i,y}>: pkg_oUnit
 <lib_test/*.ml{,i,y}>: pkg_tcpip
+<lib_test/*.ml{,i,y}>: pkg_tcpip.arpv4
 <lib_test/*.ml{,i,y}>: pkg_tcpip.ethif
 <lib_test/*.ml{,i,y}>: pkg_tcpip.ipv4
 <lib_test/*.ml{,i,y}>: use_irmin-arp
