@@ -94,7 +94,8 @@ module Arp = struct
       ethif: Ethif.t;
       mutable bound_ips: Ipaddr.V4.t list; 
       (* mutable for compability with existing ipv4 code :( *)
-      cache: cache
+      node: T.Path.t;
+      cache: cache;
     } 
 
     type id = t
@@ -135,25 +136,26 @@ module Arp = struct
       let (>>=) = Lwt.bind in
       (* seems like clone_force might give us something stale? *)
       Irmin.clone_force task (t.cache "cloning for timeouts") tag >>= fun our_br ->
-      Irmin.read_exn (our_br "read for timeouts") T.Path.empty >>= fun table ->
+      Irmin.read_exn (our_br "read for timeouts") t.node >>= fun table ->
       let updated = T.expire table now in
       (* TODO: this could stand to either not be committed if no changes happen,
          or to have a more informative commit message, or both *)
-      Irmin.update (our_br "Arp.tick: updating to age out old entries") T.Path.empty updated >>= fun () ->
+      Irmin.update (our_br "Arp.tick: updating to age out old entries") t.node updated >>= fun () ->
       Irmin.merge "Arp.tick: merge expiry branch" our_br ~into:t.cache >>= function
       | `Ok store -> Time.sleep arp_timeout >>= fun () -> tick t ()
-      | `Conflict str -> Irmin.update (t.cache str) T.Path.empty table >>= fun () ->
+      | `Conflict str -> Irmin.update (t.cache str) t.node table >>= fun () ->
         Time.sleep arp_timeout >>= fun () -> tick t ()
 
     (* TODO: treatment of multicast ethernet address messages differs between
        routers and end hosts; we have no way of knowing which we are without
        taking a setup parameter. *)
-    let connect ethif config =
+    let connect ethif config (node : string list) =
       let store = Irmin.basic (module Maker) (module T) in
+      let node = T.Path.create node in
       Irmin.create store config task >>= fun cache ->
-      Irmin.update (cache "Arp.create: Initial empty cache") T.Path.empty T.empty 
+      Irmin.update (cache "Arp.create: Initial empty cache") node T.empty 
       >>= fun () ->
-      let t = { ethif; bound_ips = []; cache; } in
+      let t = { ethif; bound_ips = []; node; cache; } in
       Lwt.async (tick t);
       Lwt.return (`Ok t)
 
@@ -179,14 +181,14 @@ module Arp = struct
       let now = Clock.time () in
       let expire = now +. arp_timeout in
       try
-        Irmin.read_exn (t.cache "lookup") T.Path.empty 
+        Irmin.read_exn (t.cache "lookup") t.node
         >>= fun table ->
         match T.find ip table with
         | Entry.Pending (_, w) ->
           let str = "entry resolved: " ^ Ipaddr.V4.to_string ip ^ " -> " ^
                     Macaddr.to_string mac in
           let updated = T.add ip (Entry.Confirmed (expire, mac)) table in
-          Irmin.update (t.cache str) T.Path.empty updated >>= fun
+          Irmin.update (t.cache str) t.node updated >>= fun
             () ->
           Lwt.wakeup w (`Ok mac);
           Lwt.return_unit
@@ -194,16 +196,16 @@ module Arp = struct
           let str = "entry updated: " ^ Ipaddr.V4.to_string ip ^ " -> " ^
                     Macaddr.to_string mac in
           let updated = T.add ip (Entry.Confirmed (expire, mac)) table in
-          Irmin.update (t.cache str) T.Path.empty updated >>= fun
+          Irmin.update (t.cache str) t.node updated >>= fun
             () ->
           Lwt.return_unit
       with
       | Not_found ->
         let str = "entry added: " ^ Ipaddr.V4.to_string ip ^ " -> " ^
                   Macaddr.to_string mac in
-        Irmin.read_exn (t.cache "lookup") T.Path.empty >>= fun table ->
+        Irmin.read_exn (t.cache "lookup") t.node >>= fun table ->
         let updated = T.add ip (Entry.Confirmed (expire, mac)) table in
-        Irmin.update (t.cache str) T.Path.empty updated >>= fun
+        Irmin.update (t.cache str) t.node updated >>= fun
           () ->
         Lwt.return_unit
 
@@ -257,7 +259,7 @@ module Arp = struct
     let query t ip =
       let (>>=) = Lwt.bind in
       let open Entry in
-      Irmin.read_exn (t.cache "Arp.query") T.Path.empty 
+      Irmin.read_exn (t.cache "Arp.query") t.node
       >>= fun table ->
       try
         match T.find ip table with
@@ -270,9 +272,9 @@ module Arp = struct
         let str = Printf.sprintf "Arp.query: query thread launched for ip %s"
             (Ipaddr.V4.to_string ip) in
         Irmin.clone_force task (t.cache str) "query_new" >>= fun our_branch ->
-        Irmin.read_exn (our_branch "Arp.query") T.Path.empty >>= fun table ->
+        Irmin.read_exn (our_branch "Arp.query") t.node >>= fun table ->
         let updated = T.add ip (Pending (response, waker)) table in
-        Irmin.update (our_branch str) T.Path.empty updated >>= fun () ->
+        Irmin.update (our_branch str) t.node updated >>= fun () ->
         Irmin.merge_exn str our_branch ~into:t.cache >>= fun () ->
         let rec retry n () =
           (* First request, so send a query packet *)
@@ -289,9 +291,9 @@ module Arp = struct
               let str = Printf.sprintf "Arp.query: query thread timed out for ip %s"
                   (Ipaddr.V4.to_string ip) in
               Irmin.clone_force task (t.cache str) "query_timeout" >>= fun our_branch ->
-              Irmin.read_exn (our_branch "Arp.query") T.Path.empty >>= fun table ->
+              Irmin.read_exn (our_branch "Arp.query") t.node >>= fun table ->
               let updated = T.remove ip table in
-              Irmin.update (our_branch str) T.Path.empty updated >>= fun () ->
+              Irmin.update (our_branch str) t.node updated >>= fun () ->
               Irmin.merge_exn str our_branch ~into:t.cache >>= fun () ->
               Lwt.wakeup waker `Timeout;
               Lwt.return_unit
