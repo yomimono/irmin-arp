@@ -15,9 +15,8 @@ let or_error name fn t =
   | `Error e -> OUnit.assert_failure ("Error starting " ^ name)
   | `Ok t -> return t
 
-let clear_cache config =
+let clear_cache config node =
   let store = Irmin.basic (module Irmin_backend_fs) (module T) in
   Irmin.create store config Irmin_unix.task >>= fun store ->
-  let node = T.Path.empty in
-  Irmin.remove (store "removing previous history for new test run") node
+  Irmin.remove (store "removing previous history for new test run") [node]
 

@@ -52,18 +52,27 @@ let first_ip = Ipaddr.V4.of_string_exn "192.168.3.1"
 let second_ip = Ipaddr.V4.of_string_exn "192.168.3.10"
 let sample_mac = Macaddr.of_string_exn "10:9a:dd:c0:ff:ee"
 
+type stack = {
+  config: Irmin.config;
+  node: T.Path.t;
+  backend: B.t;
+  netif: V.t;
+  ethif: E.t;
+  arp: A_fs.t;
+}
+
 let send_buf_sleep_then_dc speak_netif listen_netif bufs () =
   Lwt.join (List.map (V.write speak_netif) bufs) >>= fun () ->
   Fast_time.sleep 0.1 >>= fun () ->
   V.disconnect listen_netif
 
-let get_arp ?(backend = B.create ()) ~root () =
+let get_arp ?(backend = B.create ()) ~root ~node () =
   or_error "backend" V.connect backend >>= fun netif ->
   or_error "ethif" E.connect netif >>= fun ethif ->
   let config = Irmin_storer_fs.config ~root () in
-  clear_cache config >>= fun () ->
-  A_fs.connect ethif config >>= function
-  | `Ok a -> Lwt.return (config, backend, netif, ethif, a)
+  clear_cache config node >>= fun () ->
+  A_fs.connect ethif config [node] >>= function
+  | `Ok arp -> Lwt.return {config; node = [node]; backend; netif; ethif; arp;}
   | `Error e -> OUnit.assert_failure "Couldn't start ARP :("
 
 let create_is_consistent () =
@@ -71,12 +80,11 @@ let create_is_consistent () =
   (* possibly assert some qualities of a freshly-created ARP interface -- e.g.
      no bound IPs, empty cache, etc *)
   let root = root ^ "/create_is_consistent" in
-  get_arp ~root () >>= fun (config, _, _, _, a) ->
-  OUnit.assert_equal [] (A_fs.get_ips a);
-  (* cache should contain an empty map at T.Path.empty *)
+  get_arp ~root ~node:"__root__" () >>= fun stack ->
+  OUnit.assert_equal [] (A_fs.get_ips stack.arp);
   let store = Irmin.basic (module Irmin_backend_fs) (module T) in
-  Irmin.create store config Irmin_unix.task >>= fun cache ->
-  Irmin.read (cache "create_is_consistent checking for empty map") T.Path.empty >>=
+  Irmin.create store stack.config Irmin_unix.task >>= fun cache ->
+  Irmin.read (cache "create_is_consistent checking for empty map") stack.node >>=
   function
   | None -> OUnit.assert_failure "Expected location of the cache was empty"
   | Some map -> OUnit.assert_equal T.empty map; Lwt.return_unit
@@ -101,15 +109,15 @@ let timeout_or ~timeout ~msg listen_netif do_fn listen_fn =
   ]
 
 let set_ips () =
-  get_arp ~root:(root ^ "/set_ips") () >>= fun (_, backend, _, _, a) ->
+  get_arp ~root ~node:"set_ips" () >>= fun stack ->
   (* set up a listener on the same backend that will return when it hears a GARP *)
-  or_error "backend" V.connect backend >>= fun listen_netif ->
-  (* TODO: according to the contract in arpv4.mli, add_ip, set_ip, and remove_ip
+  or_error "backend" V.connect stack.backend >>= fun listen_netif ->
+  (* TODO: according to the contract in arpv4.mli, add_ip and set_ip
    are supposed to emit GARP packets; we should
    generalize this test for use in other functions *)
   let do_fn () =
-    A_fs.set_ips a [ first_ip ] >>= fun () ->
-    OUnit.assert_equal [ first_ip ] (A_fs.get_ips a);
+    A_fs.set_ips stack.arp [ first_ip ] >>= fun () ->
+    OUnit.assert_equal [ first_ip ] (A_fs.get_ips stack.arp);
     Lwt.return_unit
   in
   let listen_fn () =
@@ -126,51 +134,50 @@ let set_ips () =
   in
   timeout_or ~timeout:0.1 ~msg:"100ms timeout exceeded before listen_fn returned"
     listen_netif do_fn listen_fn >>= fun () ->
-  A_fs.set_ips a [] >>= fun () ->
-  OUnit.assert_equal [] (A_fs.get_ips a);
-  A_fs.set_ips a [ first_ip; Ipaddr.V4.of_string_exn "10.20.1.1" ] >>= fun () ->
+  A_fs.set_ips stack.arp [] >>= fun () ->
+  OUnit.assert_equal [] (A_fs.get_ips stack.arp);
+  A_fs.set_ips stack.arp [ first_ip; Ipaddr.V4.of_string_exn "10.20.1.1" ] >>= fun () ->
   OUnit.assert_equal [ first_ip; Ipaddr.V4.of_string_exn "10.20.1.1" ] (A_fs.get_ips
-                                                                       a);
+                                                                       stack.arp);
   Lwt.return_unit
 
 let get_remove_ips () =
-  get_arp ~root:(root ^ "/remove_ips") () >>= fun (_, backend, _, _, a) ->
-  OUnit.assert_equal [] (A_fs.get_ips a);
-  A_fs.set_ips a [ first_ip; first_ip ] >>= fun () ->
-  let ips = A_fs.get_ips a in
+  get_arp ~root:(root ^ "/remove_ips") ~node:"__root__" () >>= fun stack ->
+  OUnit.assert_equal [] (A_fs.get_ips stack.arp);
+  A_fs.set_ips stack.arp [ first_ip; first_ip ] >>= fun () ->
+  let ips = A_fs.get_ips stack.arp in
   OUnit.assert_equal true (List.mem first_ip ips);
   OUnit.assert_equal true (List.for_all (fun a -> a = first_ip) ips);
   OUnit.assert_equal true (List.length ips >= 1 && List.length ips <= 2);
-  A_fs.remove_ip a first_ip >>= fun () ->
-  OUnit.assert_equal [] (A_fs.get_ips a);
-  A_fs.remove_ip a first_ip >>= fun () ->
-  OUnit.assert_equal [] (A_fs.get_ips a);
+  A_fs.remove_ip stack.arp first_ip >>= fun () ->
+  OUnit.assert_equal [] (A_fs.get_ips stack.arp);
+  A_fs.remove_ip stack.arp first_ip >>= fun () ->
+  OUnit.assert_equal [] (A_fs.get_ips stack.arp);
   Lwt.return_unit
 
 let input_single_garp () =
   (* use on-disk git fs for cache so we can read it back and check it ourselves *)
   let root = root ^ "/input_single_garp" in
   let backend = B.create () in
-  get_arp ~backend ~root:(root ^ "/listener") () >>=
-  fun (listen_config, backend, listen_netif, listen_ethif, listen_arp) ->
-  get_arp ~backend ~root:(root ^ "/speaker") () >>=
-  fun (_, backend, speak_netif, speak_ethif, speak_arp) ->
-  (* send a GARP from one side (speak_arp) and make sure it was heard on the
+  get_arp ~backend ~root ~node:"listener" () >>= fun listen ->
+  get_arp ~backend ~root ~node:"speaker" () >>= fun speak ->
+  (* send a GARP from one side (speak.arp) and make sure it was heard on the
      other *)
-  timeout_or ~timeout:0.1 ~msg:"Nothing received by listen_netif when trying to
+  timeout_or ~timeout:0.1 ~msg:"Nothing received by listen.netif when trying to
   do single GARP input test"
-    listen_netif (fun () -> A_fs.set_ips speak_arp [ first_ip ] )
-    (fun () -> fun buf -> A_fs.input listen_arp buf >>= fun () -> V.disconnect listen_netif)
+    listen.netif (fun () -> A_fs.set_ips speak.arp [ first_ip ] )
+    (fun () -> fun buf -> A_fs.input listen.arp buf >>= fun () -> V.disconnect
+        listen.netif)
   >>= fun () ->
   (* load our own representation of the ARP cache of the listener *)
   let store = Irmin.basic (module Irmin_backend_fs) (module T) in
-  Irmin.create store listen_config Irmin_unix.task >>= fun store ->
-  Irmin.read_exn (store "readback of map") T.Path.empty >>= fun map ->
+  Irmin.create store listen.config Irmin_unix.task >>= fun store ->
+  Irmin.read_exn (store "readback of map") listen.node >>= fun map ->
   try
     let open Entry in
     match T.find first_ip map with
     | Confirmed (time, entry) -> OUnit.assert_equal ~printer:Macaddr.to_string
-                                   entry (V.mac speak_netif);
+                                   entry (V.mac speak.netif);
       Lwt.return_unit
     | Pending _ -> OUnit.assert_failure "Pending entry for an entry that had a
   GARP emitted on the same vnetif backend"
@@ -182,32 +189,31 @@ let input_multiple_garp () =
   let root = root ^ "/input_multiple_garp" in
   let strip = Ipaddr.V4.of_string_exn in
   let backend = B.create () in
-  get_arp ~backend ~root:(root ^ "/listener") () >>=
-  fun (listen_config, backend, listen_netif, listen_ethif, listen_arp) ->
-  get_arp ~backend ~root:(root ^ "/speaker1") () >>= fun (_, _, n1, _, speaker1) ->
-  get_arp ~backend ~root:(root ^ "/speaker2") () >>= fun (_, _, n2, _, speaker2) ->
-  get_arp ~backend ~root:(root ^ "/speaker3") () >>= fun (_, _, n3, _, speaker3) ->
-  get_arp ~backend ~root:(root ^ "/speaker4") () >>= fun (_, _, n4, _, speaker4) ->
-  get_arp ~backend ~root:(root ^ "/speaker5") () >>= fun (_, _, n5, _, speaker5) ->
+  get_arp ~backend ~root ~node:"listener" () >>= fun listen ->
+  get_arp ~backend ~root ~node:"speaker1" () >>= fun speaker1 ->
+  get_arp ~backend ~root ~node:"speaker2" () >>= fun speaker2 ->
+  get_arp ~backend ~root ~node:"speaker3" () >>= fun speaker3 ->
+  get_arp ~backend ~root ~node:"speaker4" () >>= fun speaker4 ->
+  get_arp ~backend ~root ~node:"speaker5" () >>= fun speaker5 ->
   let multiple_ips () = 
-    A_fs.set_ips speaker1 [ first_ip ] >>= fun () ->
-    A_fs.set_ips speaker2 [ second_ip ] >>= fun () ->
-    A_fs.set_ips speaker3 [ (strip "192.168.3.33") ] >>= fun () ->
-    A_fs.set_ips speaker4 [ (strip "192.168.3.44") ] >>= fun () ->
-    A_fs.set_ips speaker5 [ (strip "192.168.3.255") ] >>= fun () ->
+    A_fs.set_ips speaker1.arp [ first_ip ] >>= fun () ->
+    A_fs.set_ips speaker2.arp [ second_ip ] >>= fun () ->
+    A_fs.set_ips speaker3.arp [ (strip "192.168.3.33") ] >>= fun () ->
+    A_fs.set_ips speaker4.arp [ (strip "192.168.3.44") ] >>= fun () ->
+    A_fs.set_ips speaker5.arp [ (strip "192.168.3.255") ] >>= fun () ->
     Fast_time.sleep 0.2 >>= fun () -> 
-    V.disconnect listen_netif >>= fun () ->
+    V.disconnect listen.netif >>= fun () ->
     Lwt.return_unit
   in
-  let listen_fn () = V.listen listen_netif (E.input ~arpv4:(A_fs.input listen_arp)
+  let listen_fn () = V.listen listen.netif (E.input ~arpv4:(A_fs.input listen.arp)
       ~ipv4:(fun buf -> Lwt.return_unit) ~ipv6:(fun buf -> Lwt.return_unit)
-      listen_ethif)
+      listen.ethif)
   in
   Lwt.join [ multiple_ips (); listen_fn () ] >>= fun () ->
   (* load our own representation of the ARP cache of the listener *)
   let store = Irmin.basic (module Irmin_backend_fs) (module T) in
-  Irmin.create store listen_config Irmin_unix.task >>= fun store ->
-  Irmin.read_exn (store "readback of map") T.Path.empty >>= fun imap ->
+  Irmin.create store listen.config Irmin_unix.task >>= fun store ->
+  Irmin.read_exn (store "readback of map") listen.node >>= fun imap ->
   let confirm map (ip, mac) =
     try
       let open Entry in
@@ -221,44 +227,42 @@ let input_multiple_garp () =
                      "Expected cache entry %s not found in listener cache map,
                      as read back from Irmin" (Ipaddr.V4.to_string ip))
   in
-  confirm imap (first_ip, (V.mac n1)) >>= fun () ->
-  confirm imap (second_ip, (V.mac n2)) >>= fun () ->
-  confirm imap (strip "192.168.3.33", (V.mac n3)) >>= fun () ->
-  confirm imap (strip "192.168.3.44", (V.mac n4)) >>= fun () ->
-  confirm imap (strip "192.168.3.255", (V.mac n5)) >>= fun () ->
+  confirm imap (first_ip, (V.mac speaker1.netif)) >>= fun () ->
+  confirm imap (second_ip, (V.mac speaker2.netif)) >>= fun () ->
+  confirm imap (strip "192.168.3.33", (V.mac speaker3.netif)) >>= fun () ->
+  confirm imap (strip "192.168.3.44", (V.mac speaker4.netif)) >>= fun () ->
+  confirm imap (strip "192.168.3.255", (V.mac speaker5.netif)) >>= fun () ->
   Lwt.return_unit
 
 let input_single_unicast () =
   (* use on-disk git fs for cache so we can read it back and check it ourselves *)
   let root = root ^ "/input_single_unicast" in
   let backend = B.create () in
-  get_arp ~backend ~root:(root ^ "/listener") () >>=
-  fun (listen_config, backend, listen_netif, listen_ethif, listen_arp) ->
-  get_arp ~backend ~root:(root ^ "/speaker") () >>=
-  fun (_, backend, speak_netif, speak_ethif, speak_arp) ->
-  (* send an ARP reply from one side (speak_arp) and make sure it was heard on the
+  get_arp ~backend ~root ~node:"listener" () >>= fun listen ->
+  get_arp ~backend ~root ~node:"speaker" () >>= fun speak ->
+  (* send an ARP reply from one side (speak.arp) and make sure it was heard on the
      other *)
   (* in order to package this properly, we need mac details for each netif *)
   let for_listener = Irmin_arp.Arp.Parse.cstruct_of_arp
       { Irmin_arp.Arp.op = `Reply; 
-        sha = (V.mac speak_netif); 
-        tha = (V.mac listen_netif); spa = first_ip;
+        sha = (V.mac speak.netif); 
+        tha = (V.mac listen.netif); spa = first_ip;
         tpa = second_ip } in
-  timeout_or ~timeout:0.1 ~msg:"Nothing received by listen_netif when trying to
+  timeout_or ~timeout:0.1 ~msg:"Nothing received by listen.netif when trying to
   do single unicast reply input test"
-    listen_netif (fun () -> E.write speak_ethif for_listener)
-    (fun () -> fun buf -> A_fs.input listen_arp buf >>= fun () -> V.disconnect listen_netif)
+    listen.netif (fun () -> E.write speak.ethif for_listener)
+    (fun () -> fun buf -> A_fs.input listen.arp buf >>= fun () -> V.disconnect listen.netif)
   >>= fun () ->
-  (* listen_config should have the ARP cache history reflecting the updates send
-     by speak_arp; a current read should show us first_ip *)
+  (* listen.config should have the ARP cache history reflecting the updates send
+     by speak.arp; a current read should show us first_ip *)
   let store = Irmin.basic (module Irmin_backend_fs) (module T) in
-  Irmin.create store listen_config Irmin_unix.task >>= fun store ->
-  Irmin.read_exn (store "readback of map") T.Path.empty >>= fun map ->
+  Irmin.create store listen.config Irmin_unix.task >>= fun store ->
+  Irmin.read_exn (store "readback of map") listen.node >>= fun map ->
   (* TODO: iterate over the commit history of IPs *)
   try
     let open Entry in
     match T.find first_ip map with
-    | Confirmed (time, entry) -> OUnit.assert_equal entry (V.mac speak_netif);
+    | Confirmed (time, entry) -> OUnit.assert_equal entry (V.mac speak.netif);
       Lwt.return_unit
     | Pending _ -> OUnit.assert_failure "Pending entry for an entry that had a
   unicast reply emitted on the same vnetif backend"
@@ -269,33 +273,31 @@ let input_single_unicast () =
 let input_changed_ip () =
   let root = root ^ "/input_changed_ip" in
   let backend = B.create () in
-  get_arp ~backend ~root:(root ^ "/speaker") () >>=
-  fun (speak_config, backend, speak_netif, speak_ethif, speak_arp) ->
-  get_arp ~backend ~root:(root ^ "/listener") () >>=
-  fun (listen_config, backend, listen_netif, listen_ethif, listen_arp) ->
+  get_arp ~backend ~root ~node:"speaker" () >>= fun speak ->
+  get_arp ~backend ~root ~node:"listener" () >>= fun listen ->
   let multiple_ips () =
-    A_fs.set_ips speak_arp [ Ipaddr.V4.of_string_exn "10.23.10.1" ] >>= fun () ->
-    A_fs.set_ips speak_arp [ Ipaddr.V4.of_string_exn "10.50.20.22" ] >>= fun () ->
-    A_fs.set_ips speak_arp [ Ipaddr.V4.of_string_exn "10.20.254.2" ] >>= fun () ->
-    A_fs.set_ips speak_arp [ first_ip ] >>= fun () ->
-    Fast_time.sleep 0.1 >>= fun () -> V.disconnect listen_netif >>= fun () ->
+    A_fs.set_ips speak.arp [ Ipaddr.V4.of_string_exn "10.23.10.1" ] >>= fun () ->
+    A_fs.set_ips speak.arp [ Ipaddr.V4.of_string_exn "10.50.20.22" ] >>= fun () ->
+    A_fs.set_ips speak.arp [ Ipaddr.V4.of_string_exn "10.20.254.2" ] >>= fun () ->
+    A_fs.set_ips speak.arp [ first_ip ] >>= fun () ->
+    Fast_time.sleep 0.1 >>= fun () -> V.disconnect listen.netif >>= fun () ->
     Lwt.return_unit
   in
-  let listen_fn () = V.listen listen_netif (E.input ~arpv4:(A_fs.input listen_arp)
+  let listen_fn () = V.listen listen.netif (E.input ~arpv4:(A_fs.input listen.arp)
       ~ipv4:(fun buf -> Lwt.return_unit) ~ipv6:(fun buf -> Lwt.return_unit)
-      listen_ethif)
+      listen.ethif)
   in
   Lwt.join [ multiple_ips (); listen_fn () ] >>= fun () ->
-  (* listen_config should have the ARP cache history reflecting the updates send
-     by speak_arp; a current read should show us first_ip *)
+  (* listen.config should have the ARP cache history reflecting the updates send
+     by speak.arp; a current read should show us first_ip *)
   let store = Irmin.basic (module Irmin_backend_fs) (module T) in
-  Irmin.create store listen_config Irmin_unix.task >>= fun store ->
-  Irmin.read_exn (store "readback of map") T.Path.empty >>= fun map ->
+  Irmin.create store listen.config Irmin_unix.task >>= fun store ->
+  Irmin.read_exn (store "readback of map") listen.node >>= fun map ->
   (* TODO: iterate over the commit history of IPs *)
   try
     let open Entry in
     match T.find first_ip map with
-    | Confirmed (time, entry) -> OUnit.assert_equal entry (V.mac speak_netif);
+    | Confirmed (time, entry) -> OUnit.assert_equal entry (V.mac speak.netif);
       Lwt.return_unit
     | Pending _ -> OUnit.assert_failure "Pending entry for an entry that had a
   GARP emitted on the same vnetif backend"
@@ -307,19 +309,18 @@ let input_garbage () =
   let open A_fs in
   let root = root ^ "/input_garbage" in
   let backend = B.create () in
-  get_arp ~backend ~root:(root ^ "/speaker") () >>= fun (_, backend, speak_netif, _, _) ->
-  get_arp ~backend ~root:(root ^ "/listener") () >>=
-  fun (listen_config, backend, listen_netif, listen_ethif, listen_arp) ->
-  A_fs.set_ips listen_arp [ first_ip ] >>= fun () ->
-  let listen_fn () = V.listen listen_netif (E.input ~arpv4:(A_fs.input listen_arp)
+  get_arp ~backend ~root ~node:"speaker" () >>= fun speak ->
+  get_arp ~backend ~root ~node:"listener" () >>= fun listen ->
+  A_fs.set_ips listen.arp [ first_ip ] >>= fun () ->
+  let listen_fn () = V.listen listen.netif (E.input ~arpv4:(A_fs.input listen.arp)
       ~ipv4:(fun buf -> Lwt.return_unit) ~ipv6:(fun buf -> Lwt.return_unit)
-      listen_ethif)
+      listen.ethif)
   in
-  let fire_away = send_buf_sleep_then_dc speak_netif listen_netif in
+  let fire_away = send_buf_sleep_then_dc speak.netif listen.netif in
   (* TODO: this is a good candidate for a property test -- `parse` on an arbitrary
      buffer of size less than k always returns `Too_short *)
-  let listener_mac = V.mac listen_netif in
-  let speaker_mac = V.mac speak_netif in
+  let listener_mac = V.mac listen.netif in
+  let speaker_mac = V.mac speak.netif in
   (* don't keep entries for unicast replies to someone else *)
   let for_someone_else = Irmin_arp.Arp.Parse.cstruct_of_arp
       { Irmin_arp.Arp.op = `Reply; sha = listener_mac; tha = speaker_mac; spa = first_ip;
@@ -344,8 +345,8 @@ let input_garbage () =
   (* TODO: in fact, shouldn't ever have been anything in the cache as a result
      of all that nonsense *)
   let store = Irmin.basic (module Irmin_backend_fs) (module T) in
-  Irmin.create store listen_config Irmin_unix.task >>= fun store ->
-  Irmin.read_exn (store "readback of map") T.Path.empty >>= fun map ->
+  Irmin.create store listen.config Irmin_unix.task >>= fun store ->
+  Irmin.read_exn (store "readback of map") listen.node >>= fun map ->
   OUnit.assert_equal T.empty map;
   Lwt.return_unit
 
@@ -391,30 +392,26 @@ let parse_unparse () =
 
 let query_with_seeded_cache () =
   let root = root ^ "/query_with_seeded_cache" in
-  let speak_dir = root ^ "/speaker" in
-  let listen_dir = root ^ "/listener" in
   let backend = B.create () in
-  get_arp ~backend ~root:speak_dir () >>=
-  fun (speak_config, backend, speak_netif, speak_ethif, speak_arp) ->
-  A_fs.set_ips speak_arp [ first_ip ] >>= fun () ->
-  get_arp ~backend ~root:listen_dir () >>=
-  fun (_, backend, listen_netif, listen_ethif, listen_arp) ->
+  get_arp ~backend ~root ~node:"speaker" () >>= fun speak ->
+  A_fs.set_ips speak.arp [ first_ip ] >>= fun () ->
+  get_arp ~backend ~root ~node:"listener" () >>= fun listen ->
   let store = Irmin.basic (module Irmin_backend_fs) (module T) in
-  Irmin.create store speak_config Irmin_unix.task >>= fun store ->
-  Irmin.read (store "readback of map") T.Path.empty >>= function
-    | None -> OUnit.assert_failure "Couldn't read store from query_for_seeded_map"
+  Irmin.create store speak.config Irmin_unix.task >>= fun store ->
+  Irmin.read (store "readback of map") speak.node >>= function
+    | None -> OUnit.assert_failure "Couldn't read store from query_with_seeded_map"
     | Some map ->
       OUnit.assert_equal T.empty map;
       let seeded = T.add second_ip (Entry.Confirmed ((Clock.time () +. 60.), sample_mac)) map in
-      Irmin.update (store "query_with_seeded_cache: seed cache entry") T.Path.empty
-        seeded >>= fun () ->
+      Irmin.update (store "query_with_seeded_cache: seed cache entry")
+        speak.node seeded >>= fun () ->
       (* OK, we've written an entry, so now calling query for that key
          should not emit an ARP query and should return straight away *)
       timeout_or ~timeout:0.5 ~msg:"Query sent for something that was seeded in
-        the cache" listen_netif
-        (fun () -> A_fs.query speak_arp second_ip >>= function
+        the cache" listen.netif
+        (fun () -> A_fs.query speak.arp second_ip >>= function
         | `Ok mac when mac = sample_mac -> (* yay! *)
-          V.disconnect listen_netif
+          V.disconnect listen.netif
         | `Ok mac -> OUnit.assert_failure (Printf.sprintf "pre-seeded query got a
     MAC, but it's the wrong one: %s" (Macaddr.to_string mac))
         | `Timeout -> OUnit.assert_failure "Query timed out for something that was
@@ -426,15 +423,11 @@ let query_with_seeded_cache () =
 
 let query_sent_with_empty_cache () =
   let root = root ^ "/query_sent_with_empty_cache" in
-  let speak_dir = root ^ "/speaker" in
-  let listen_dir = root ^ "/listener" in
   let backend = B.create () in
-  get_arp ~backend ~root:speak_dir () >>=
-  fun (_, backend, speak_netif, speak_ethif, speak_arp) ->
-  get_arp ~backend ~root:listen_dir () >>=
-  fun (_, backend, listen_netif, listen_ethif, listen_arp) ->
+  get_arp ~backend ~root ~node:"speaker" () >>= fun speak ->
+  get_arp ~backend ~root ~node:"listener" () >>= fun listen ->
   let do_fn () =
-    A_fs.query speak_arp first_ip >>= function
+    A_fs.query speak.arp first_ip >>= function
     | `Ok mac -> OUnit.assert_failure "query returned a MAC when the cache
     should've been empty and nobody could possibly be responding"
     | `Timeout -> Lwt.return_unit (* we shouldn't get this far, but if
@@ -450,32 +443,30 @@ let query_sent_with_empty_cache () =
                                                  resulted in a strange packet"
       | `Ok arp ->
         let expected_arp = { Irmin_arp.Arp.op = `Request;
-                             sha = (V.mac speak_netif); spa = Ipaddr.V4.any;
+                             sha = (V.mac speak.netif); spa = Ipaddr.V4.any;
                              tha = Macaddr.broadcast; tpa = first_ip } in
-        OUnit.assert_equal expected_arp arp; V.disconnect listen_netif
+        OUnit.assert_equal expected_arp arp; V.disconnect listen.netif
   in
   timeout_or ~timeout:0.1 ~msg:"ARP probe not sent in response to a query"
-    listen_netif do_fn listen_fn
+    listen.netif do_fn listen_fn
 
 let entries_aged_out () =
   let root = root ^ "/entries_aged_out" in
-  let speak_dir = root ^ "/speaker" in
   let backend = B.create () in
-  get_arp ~backend ~root:speak_dir () >>=
-  fun (speak_config, backend, speak_netif, speak_ethif, speak_arp) ->
+  get_arp ~backend ~root ~node:"speaker" () >>= fun speak ->
   let store = Irmin.basic (module Irmin_backend_fs) (module T) in
-  Irmin.create store speak_config Irmin_unix.task >>= fun store ->
+  Irmin.create store speak.config Irmin_unix.task >>= fun store ->
   Irmin.clone_force Irmin_unix.task (store "cloning for cache preseeding")
     "entries_aged_out" >>= fun our_branch ->
-  Irmin.read_exn (our_branch "readback of map") T.Path.empty >>= fun init_map ->
+  Irmin.read_exn (our_branch "readback of map") speak.node >>= fun init_map ->
   let seeded = T.add second_ip (Entry.Confirmed ((Clock.time () -. 9999999.),
                                                  sample_mac)) init_map in
-  Irmin.update (our_branch "entries_aged_out: seed cache entry") T.Path.empty
+  Irmin.update (our_branch "entries_aged_out: seed cache entry") speak.node
     seeded >>= fun () ->
   Irmin.merge_exn "entries_aged_out: merge seeded ARP entry" our_branch
     ~into:store >>= fun () ->
-  Fast_time.sleep 65. >>= fun () ->
-  Irmin.read_exn (store "readback of map") T.Path.empty >>= fun map ->
+  Fast_time.sleep 70. >>= fun () ->
+  Irmin.read_exn (store "readback of map") speak.node >>= fun map ->
   OUnit.assert_raises Not_found (fun () -> T.find second_ip map);
   Lwt.return_unit
 
