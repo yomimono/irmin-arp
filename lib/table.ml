@@ -82,10 +82,10 @@ module Make(P: Irmin.Path.S) = struct
         in
         let multiplier = match direction with | `Left -> 1 | `Right -> -1 in
         match operation key present with
-        | `Added -> multiplier * 1 (* element added in t1, keep it *)
         | `Unchanged -> multiplier * -1 (* element removed by t2, remove it *)
-        | `Modified -> multiplier * 1 (* element modified by t1 and removed by t2.  keep the
-                                         modified value *)
+        | `Added -> multiplier * 1 (* element added in t1, keep it *)
+        | `Modified -> multiplier * 1 (* element modified by t1 and removed by t2.
+                                         keep the modified value *)
       in
       let opt_compare v1 v2 =
         match v1, v2 with
