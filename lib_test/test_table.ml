@@ -113,36 +113,36 @@ let merge_conflicts_solved _ctx =
     let map = T.to_map map in
     Lwt.return (Ipv4_map.remove ip1 map)
   in
-  let node = (test_node "merge_conflicts_difft_nodes") in
+  let node = (test_node "merge_conflicts_separate_entries") in
   let original = T.of_map (sample_table ()) in
   make_on_disk ~root ~bare:false () >>= fun t ->
-  Irmin.remove (t "merge_conflicts_difft_nodes: beginning new test") node
+  Irmin.remove (t "merge_conflicts_separate_entries: beginning new test") node
   >>= fun () ->
   (* initialize data *) 
-  Irmin.update (t "merge_conflicts_difft_nodes: set original map") node original >>= fun () ->
+  Irmin.update (t "merge_conflicts_separate_entries: set original map") node original >>= fun () ->
   clone_update t ~read_msg:"clone map" 
-    ~update_msg:"merge_conflicts_difft_nodes: resolve arp entry"
+    ~update_msg:"merge_conflicts_separate_entries: resolve arp entry"
     ~branch_name:"pending_resolved" node resolve_pending
   >>= fun pend_branch ->
   clone_update t ~read_msg:"clone map" 
-    ~update_msg:"merge_conflicts_difft_nodes: remove expired entries"
+    ~update_msg:"merge_conflicts_separate_entries: remove expired entries"
     ~branch_name:"expired_removed" node remove_expired
   >>= fun exp_branch ->
   (* both branches (expired_removed, pending_resolved) should now be written
      into Irmin store *)
-  (* try merging first one, then the other, into master (t) *)
-  Irmin.merge_exn "merge_conflicts_difft_nodes: pending_resolved -> master" 
+  (* try merging first one, then the other, into primary branch (t) *)
+  Irmin.merge_exn "merge_conflicts_separate_entries: pending_resolved -> master" 
     pend_branch ~into:t >>= fun () ->
-  Irmin.merge_exn "merge_conflicts_difft_nodes: expired_removed -> master" 
+  Irmin.merge_exn "merge_conflicts_separate_entries: expired_removed -> master" 
     exp_branch ~into:t >>= fun () ->
   (* the tree should have ip3 resolved, ip1 gone, ip2 unchanged, nothing else *)
-  Irmin.read_exn (t "merge_conflicts_difft_nodes: final readback") node >>= fun map ->
+  Irmin.read_exn (t "merge_conflicts_separate_entries: final readback") node >>= fun map ->
   let map = T.to_map map in
   assert_absent map ip1;
   assert_resolves map ip2 (confirm time2 mac2);
   assert_resolves map ip3 (confirm time3 mac3);
   OUnit.assert_equal ~printer:string_of_int 2 (Ipv4_map.cardinal map);
-  Irmin.remove (t "merge_conflicts_difft_nodes: test succeeded; removing data")
+  Irmin.remove (t "merge_conflicts_separate_entries: test succeeded; removing data")
     node >>= fun () ->
   Lwt.return_unit
 
@@ -208,6 +208,32 @@ let complex_merge_pairwise () =
   Irmin.remove (t "merge_pairwise: test succeeded; removing data") node >>= fun () ->
   Lwt.return_unit
 
+let merge_competing_branches () =
+  let node = (test_node "merge_competing_branches") in
+  let original = T.of_map (sample_table ()) in
+  make_on_disk ~root ~bare:false () >>= fun t ->
+  Irmin.update (t "merge_competing_branches: original map") node original >>= fun () ->
+  Irmin.clone_force Irmin_unix.task (t "merge_competing: first branch")
+    "competing" >>= fun t1 ->
+  let ip = Ipaddr.V4.of_string_exn "10.0.0.1" in
+  let mac = Macaddr.of_string_exn "00:16:3e:11:11:11" in
+  let t1_map = T.add ip (Entry.Confirmed (0.5, mac)) T.empty in
+  Irmin.update (t1 "merge_competing: first branch") node t1_map >>=
+  fun () ->
+  Irmin.clone_force Irmin_unix.task (t "merge_competing: second branch")
+    "competing" >>= fun t2 ->
+  let ip = Ipaddr.V4.of_string_exn "10.0.0.1" in
+  let mac = Macaddr.of_string_exn "00:16:3e:22:22:22" in
+  let t2_map = T.add ip (Entry.Confirmed (1.0, mac)) T.empty in
+  Irmin.update (t2 "merge_competing: second branch") node t2_map >>=
+  fun () ->
+  (* now try merging t1 into primary *)
+  Irmin.merge_exn "merge_competing: merge t1 into primary" t1 ~into:t >>= fun () ->
+  Irmin.merge_exn "merge_competing: merge t2 into primary" t2 ~into:t >>= fun () ->
+  Irmin.read_exn (t "merge_competing: final readback") node >>= fun map ->
+  OUnit.assert_equal (T.to_map t2_map) (T.to_map map);
+  Lwt.return_unit
+
 let lwt_run f () = Lwt_main.run (f ())
 
 let () =
@@ -220,11 +246,13 @@ let () =
   let update = [
     "simple_update", `Quick, lwt_run simple_update_works;
   ] in
-  let merge = [
+  let merge = [ (*
     "merge w/conflict; remove then update", `Quick, lwt_run complex_merge_remove_then_update;
     "merge w/conflict; both clones, both updates, both merges", `Quick, lwt_run
       complex_merge_pairwise;
-    "merge w/divergent nodes", `Quick, lwt_run merge_conflicts_solved;
+    "merge w/no conflict", `Quick, lwt_run merge_conflicts_solved; *)
+    "merge w/competing branches", `Quick, lwt_run merge_competing_branches;
+
   ] in
   Alcotest.run "Irmin_arp" [
     "expire", expire;
