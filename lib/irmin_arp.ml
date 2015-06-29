@@ -111,6 +111,14 @@ module Arp = struct
 
     let (>>=) = Lwt.bind
 
+    let rec clone_nicely task cache tag =
+      Irmin.clone task cache tag >>= function
+      | `Ok branch -> Lwt.return (tag, branch)
+      | `Duplicated_tag ->
+        let now = Clock.time () in
+        let new_tag = tag ^ "-" ^ (string_of_float now) in
+        clone_nicely task cache new_tag
+
     let pp fmt t =
       Irmin.read_exn (t.cache "read map for prettyprint") t.node >>= fun map ->
       Format.fprintf fmt "%s" (Ezjsonm.to_string (Ezjsonm.wrap (T.to_json
@@ -139,9 +147,8 @@ module Arp = struct
 
     let rec tick t () =
       let now = Clock.time () in
-      let tag = (Printf.sprintf "expire_%f" now) in
-      (* seems like clone_force might give us something stale? *)
-      Irmin.clone_force task (t.cache "cloning for timeouts") tag >>= fun our_br ->
+      let tag = "expire" in
+      clone_nicely task (t.cache "cloning for timeouts") tag >>= fun (_tag, our_br) ->
       Irmin.read_exn (our_br "read for timeouts") t.node >>= fun table ->
       let updated = T.expire table now in
       (* TODO: this could stand to either not be committed if no changes happen,
@@ -198,33 +205,26 @@ module Arp = struct
     let notify t ip mac =
       let now = Clock.time () in
       let expire = now +. arp_timeout in
-      try
-        Irmin.read_exn (t.cache "lookup") t.node
-        >>= fun table ->
-        match Hashtbl.mem t.pending ip with
-        | true ->
-          let w = Hashtbl.find t.pending ip in
-          let str = "entry resolved: " ^ Ipaddr.V4.to_string ip ^ " -> " ^
-                    Macaddr.to_string mac in
-          let updated = T.add ip (Entry.Confirmed (expire, mac)) table in
-          Irmin.update (t.cache str) t.node updated >>= fun () ->
-          Lwt.wakeup w (`Ok mac);
-          Lwt.return_unit
-        | false -> 
-          let str = "entry updated: " ^ Ipaddr.V4.to_string ip ^ " -> " ^
-                    Macaddr.to_string mac in
-          let updated = T.add ip (Entry.Confirmed (expire, mac)) table in
-          Irmin.update (t.cache str) t.node updated >>= fun
-            () ->
-          Lwt.return_unit
-      with
-      | Not_found ->
-        let str = "entry added: " ^ Ipaddr.V4.to_string ip ^ " -> " ^
+      let tag = "notify" in
+      let merge str new_table our_br = 
+        Irmin.update (our_br ("Arp.notify: " ^ str)) t.node new_table >>= fun () ->
+        Irmin.merge_exn "Arp.notify: merge notify branch" our_br ~into:t.cache
+      in
+      clone_nicely task (t.cache "cloning for update") tag >>= fun (_, our_br) ->
+      Irmin.read_exn (our_br "lookup") t.node >>= fun table ->
+      let updated = T.add ip (Entry.Confirmed (expire, mac)) table in
+      match Hashtbl.mem t.pending ip with
+      | true ->
+        let w = Hashtbl.find t.pending ip in
+        let str = "query answered: " ^ Ipaddr.V4.to_string ip ^ " -> " ^
                   Macaddr.to_string mac in
-        Irmin.read_exn (t.cache "lookup") t.node >>= fun table ->
-        let updated = T.add ip (Entry.Confirmed (expire, mac)) table in
-        Irmin.update (t.cache str) t.node updated >>= fun () ->
+        merge str updated our_br >>= fun () ->
+        Lwt.wakeup w (`Ok mac);
         Lwt.return_unit
+      | false ->
+        let str = "gratuitous arp: " ^ Ipaddr.V4.to_string ip ^ " -> " ^
+                  Macaddr.to_string mac in
+        merge str updated our_br
 
     let probe t ip =
       let source_ip = match t.bound_ips with
@@ -290,7 +290,7 @@ module Arp = struct
               let str = Printf.sprintf "Arp.query: query thread timed out for ip %s"
                   (Ipaddr.V4.to_string ip) in
               Hashtbl.remove (t.pending) ip;
-              Irmin.clone_force task (t.cache str) "query_timeout" >>= fun our_branch ->
+              clone_nicely task (t.cache str) "query_timeout" >>= fun (_, our_branch) ->
               Irmin.read_exn (our_branch "Arp.query") t.node >>= fun table ->
               let updated = T.remove ip table in
               Irmin.update (our_branch str) t.node updated >>= fun () ->
