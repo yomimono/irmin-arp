@@ -1,7 +1,7 @@
 open Lwt
 open Test_lib
 
-let root = "test_results"
+let root = "test_results/table_tests"
 
 let make_in_memory () =
   let store = Irmin.basic (module Irmin_mem.Make) (module T) in
@@ -21,7 +21,7 @@ let update_and_readback map t ~update_msg ~readback_msg node
 
 let clone_update t ~read_msg ~update_msg ~branch_name node fn =
   let now = int_of_float (Unix.time ()) in
-  let name = branch_name ^ "-" ^ (string_of_int now) in
+  let name = branch_name (* ^ "-" ^ (string_of_int now) *) in
   Irmin.clone_force Irmin_unix.task (t read_msg) name >>= fun branch ->
   fn branch node >>= fun map ->
   Irmin.update (branch update_msg) node (T.of_map map) >>=
@@ -29,11 +29,10 @@ let clone_update t ~read_msg ~update_msg ~branch_name node fn =
 
 let test_node str = 
   let step = T.Path.Step.of_hum in
-  T.Path.create [(step "table_tests"); (step str)]
+  T.Path.create [(step str)]
 
-let readback_works _ctx =
-  make_on_disk ~root ~bare:false ()
-  >>= fun t ->
+let readback_works make_fn () =
+  make_fn () >>= fun t ->
   (* delete previous node contents *)
   let node = (test_node "readback") in
   Irmin.remove (t "readback_works: new test begins") node >>= fun () ->
@@ -61,10 +60,10 @@ let expire () =
   OUnit.assert_equal T.empty expired_map;
   Lwt.return_unit
 
-let simple_update_works _ctx =
+let simple_update_works make_fn () =
   let node = (test_node "simple_update") in
   let original = T.of_map (sample_table ()) in
-  make_on_disk ~root ~bare:false () >>= fun t ->
+  make_fn () >>= fun t ->
   Irmin.remove (t "simple_update: new test begins") node >>= fun () ->
   Irmin.update (t "simple_update: set original map") node original >>= fun () ->
   (* clone, branch, update, merge *)
@@ -102,7 +101,7 @@ let simple_update_works _ctx =
 
 (* make sure our facility for automatically solving merge conflicts is working
    as expected *)
-let merge_conflicts_solved _ctx = 
+let merge_conflicts_solved make_fn () = 
   let resolve_pending branch node =
     Irmin.read_exn (branch "resolve_pending: read map") node >>= fun map ->
     let map = T.to_map map in
@@ -167,7 +166,7 @@ let update_expired branch node =
   let map = T.to_map map in
   Lwt.return (Ipv4_map.add ip1 (confirm time3 mac1) map)
 
-let complex_merge_remove_then_update _ctx =
+let complex_merge_remove_then_update make_fn () =
   make_in_memory () >>= fun t ->
   let node = test_node "complex_merge_remove_then_update" in
   let original = T.of_map (sample_table ()) in
@@ -184,7 +183,7 @@ let complex_merge_remove_then_update _ctx =
   check_map_contents ~serialization:false (T.to_map map);
   Lwt.return_unit
 
-let complex_merge_pairwise () =
+let complex_merge_pairwise make_fn () =
   let node = (test_node "merge_pairwise") in
   let original = T.of_map (sample_table ()) in
   make_on_disk ~root ~bare:false () >>= fun t ->
@@ -208,19 +207,30 @@ let complex_merge_pairwise () =
   Irmin.remove (t "merge_pairwise: test succeeded; removing data") node >>= fun () ->
   Lwt.return_unit
 
-let merge_competing_branches () =
+let merge_competing_branches make_fn () =
+  let rec clone_nicely task cache tag =
+    Irmin.clone task cache tag >>= function
+    | `Ok branch -> Lwt.return branch
+    | `Duplicated_tag ->
+      let now = Sys.time () in
+      (* this is very ugly, but string_of_float will remove trailing 0's and
+         various git tools don't like branch names that end with .'s, so slap
+         an arbitrary non-. character on the end of the branch name *)
+      let new_tag = tag ^ "-" ^ (string_of_float now) ^ "0" in
+      clone_nicely task cache new_tag
+  in
   let node = (test_node "merge_competing_branches") in
   let original = T.of_map (sample_table ()) in
   make_on_disk ~root ~bare:false () >>= fun t ->
   Irmin.update (t "merge_competing_branches: original map") node original >>= fun () ->
-  Irmin.clone_force Irmin_unix.task (t "merge_competing: first branch")
+  clone_nicely Irmin_unix.task (t "merge_competing: first branch")
     "competing" >>= fun t1 ->
   let ip = Ipaddr.V4.of_string_exn "10.0.0.1" in
   let mac = Macaddr.of_string_exn "00:16:3e:11:11:11" in
   let t1_map = T.add ip (Entry.Confirmed (0.5, mac)) T.empty in
   Irmin.update (t1 "merge_competing: first branch") node t1_map >>=
   fun () ->
-  Irmin.clone_force Irmin_unix.task (t "merge_competing: second branch")
+  clone_nicely Irmin_unix.task (t "merge_competing: second branch")
     "competing" >>= fun t2 ->
   let ip = Ipaddr.V4.of_string_exn "10.0.0.1" in
   let mac = Macaddr.of_string_exn "00:16:3e:22:22:22" in
@@ -229,6 +239,12 @@ let merge_competing_branches () =
   fun () ->
   (* now try merging t1 into primary *)
   Irmin.merge_exn "merge_competing: merge t1 into primary" t1 ~into:t >>= fun () ->
+  (* clone a new branch *)
+  clone_nicely Irmin_unix.task (t "merge_competing: third branch")
+    "not_competing" >>= fun t3 ->
+  Irmin.update (t "merge_competing: update third branch") node T.empty >>= fun
+    () ->
+  Irmin.merge_exn "merge_competing: merge t3 into primary" t3 ~into:t >>= fun () ->
   Irmin.merge_exn "merge_competing: merge t2 into primary" t2 ~into:t >>= fun () ->
   Irmin.read_exn (t "merge_competing: final readback") node >>= fun map ->
   OUnit.assert_equal (T.to_map t2_map) (T.to_map map);
@@ -237,26 +253,36 @@ let merge_competing_branches () =
 let lwt_run f () = Lwt_main.run (f ())
 
 let () =
-  let readback = [
-    "readback", `Quick, lwt_run readback_works;
+  Log.set_log_level Log.DEBUG;
+  Log.color_on ();
+  Log.set_output stdout;
+  let readback make_fn = [
+    "readback", `Quick, readback_works make_fn |> lwt_run;
   ] in
   let expire = [
     "expire", `Quick, lwt_run expire;
   ] in
-  let update = [
-    "simple_update", `Quick, lwt_run simple_update_works;
+  let update make_fn = [
+    "simple_update", `Quick, simple_update_works make_fn |> lwt_run;
   ] in
-  let merge = [ (*
-    "merge w/conflict; remove then update", `Quick, lwt_run complex_merge_remove_then_update;
-    "merge w/conflict; both clones, both updates, both merges", `Quick, lwt_run
-      complex_merge_pairwise;
-    "merge w/no conflict", `Quick, lwt_run merge_conflicts_solved; *)
-    "merge w/competing branches", `Quick, lwt_run merge_competing_branches;
+  let merge make_fn = [
+    "merge w/conflict; remove then update", `Quick, 
+    complex_merge_remove_then_update make_fn |> lwt_run;
+    "merge w/conflict; both clones, both updates, both merges", `Quick,
+      complex_merge_pairwise make_fn |> lwt_run;
+    "merge w/no conflict", `Quick, merge_conflicts_solved make_fn |> lwt_run;
+    "merge w/competing branches", `Quick, merge_competing_branches make_fn |>
+                                          lwt_run;
 
   ] in
+  let backends = make_on_disk ~root ~bare:false in
+  let in_memory = make_in_memory in
   Alcotest.run "Irmin_arp" [
-    "expire", expire;
-    "readback", readback;
-    "update", update;
-    "merge", merge;
+    "expire", expire ;
+    "readback (on disk)", readback on_disk;
+    "readback (in memory)", readback in_memory;
+    "update (on disk)", update on_disk;
+    "update (in memory)", update in_memory;
+    "merge (on disk)", merge on_disk;
+    "merge (in memory)", merge in_memory;
   ]
