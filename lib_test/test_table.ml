@@ -275,7 +275,7 @@ let () =
                                           lwt_run;
 
   ] in
-  let backends = make_on_disk ~root ~bare:false in
+  let on_disk = make_on_disk ~root ~bare:false in
   let in_memory = make_in_memory in
   Alcotest.run "Irmin_arp" [
     "expire", expire ;
