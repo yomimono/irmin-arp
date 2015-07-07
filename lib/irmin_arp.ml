@@ -102,15 +102,19 @@ module Arp = struct
     type result = [ `Ok of Macaddr.t | `Timeout ]
     type ipaddr = Ipaddr.V4.t
     type buffer = Cstruct.t
+    type macaddr = Macaddr.t
     type 'a io = 'a Lwt.t
     type error = [ `Unknown of string ]
 
-    let prettyprint t = ""
-    (* TODO: iterate over graph of histories? *)
+    let (>>=) = Lwt.bind
+
+    let pp fmt t =
+      Irmin.read_exn (t.cache "read map for prettyprint") t.node >>= fun map ->
+      Format.fprintf fmt "%s" (Ezjsonm.to_string (Ezjsonm.wrap (T.to_json
+                                                                  map)));
+      Lwt.return_unit
 
     let disconnect t = Lwt.return_unit (* TODO: kill tick somehow *)
-
-    let (>>=) = Lwt.bind
 
     let arp_timeout = 60. (* age entries out of cache after this many seconds *)
     let probe_repeat_delay = 1.5 (* per rfc5227, 2s >= probe_repeat_delay >= 1s *)
