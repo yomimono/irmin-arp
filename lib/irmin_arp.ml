@@ -92,6 +92,7 @@ module Arp = struct
 
     type result = [ `Ok of Macaddr.t | `Timeout ]
     type ipaddr = Ipaddr.V4.t
+    type macaddr = Macaddr.t
     type buffer = Cstruct.t
     type 'a io = 'a Lwt.t
     type error = [ `Unknown of string ]
