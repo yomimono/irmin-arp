@@ -74,6 +74,19 @@ module Test (I : Irmin.S_MAKER) = struct
     | `Error -> OUnit.assert_failure "ARP didn't push cache to us"
     | `Ok -> Lwt.return cache
 
+  let confirm map (ip, mac) =
+    try
+      match T.find ip map with
+      | Entry.Confirmed (time, entry) -> 
+        OUnit.assert_equal ~printer:Macaddr.to_string entry mac;
+        Lwt.return_unit
+    with
+    | Not_found ->
+      let err = (Printf.sprintf 
+           "Expected cache entry %s not found in listener cache map)" 
+           (Ipaddr.V4.to_string ip)) in
+      OUnit.assert_failure err
+
   let first_ip = Ipaddr.V4.of_string_exn "192.168.3.1"
   let second_ip = Ipaddr.V4.of_string_exn "192.168.3.10"
   let sample_mac = Macaddr.of_string_exn "10:9a:dd:c0:ff:ee"
@@ -169,18 +182,6 @@ module Test (I : Irmin.S_MAKER) = struct
       (fun () -> fun buf -> A.input listen.arp buf >>= fun () -> V.disconnect
           listen.netif)
     >>= fun () ->
-    let confirm map (ip, mac) =
-      try
-        let open Entry in
-        match T.find first_ip map with
-        | Confirmed (time, entry) -> OUnit.assert_equal ~printer:Macaddr.to_string
-                                       entry (V.mac speak.netif);
-          Lwt.return_unit
-      with
-        Not_found -> OUnit.assert_failure (Printf.sprintf
-                                             "Expected cache entry %s not found in listener cache map,
-                     as read back from Irmin" (Ipaddr.V4.to_string ip))
-    in
     (* load our own representation of the ARP cache of the listener *)
     local_copy listen >>= fun cache ->
     Irmin.read_exn (cache "readback of map") listen.node >>= fun map ->
@@ -255,20 +256,6 @@ module Test (I : Irmin.S_MAKER) = struct
     (* load our own representation of the ARP cache of the listener *)
     local_copy listen >>= fun cache ->
     Irmin.read_exn (cache "readback of map") listen.node >>= fun imap ->
-    let confirm map (ip, mac) =
-      try
-        let open Entry in
-        match T.find ip map with
-        | Confirmed (time, entry) -> 
-          OUnit.assert_equal ~printer:Macaddr.to_string entry mac;
-          Lwt.return_unit
-      with
-        Not_found ->
-        A.pp Format.err_formatter listen.arp >>= fun () ->
-        OUnit.assert_failure 
-          (Printf.sprintf "Expected cache entry %s not found in listener cache map)" 
-             (Ipaddr.V4.to_string ip))
-    in
     confirm imap (first_ip, (V.mac speaker1.netif)) >>= fun () ->
     confirm imap (second_ip, (V.mac speaker2.netif)) >>= fun () ->
     confirm imap (strip "192.168.3.33", (V.mac speaker3.netif)) >>= fun () ->
