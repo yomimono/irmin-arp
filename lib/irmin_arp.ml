@@ -140,7 +140,6 @@ module Arp = struct
     let rec tick t () =
       let now = Clock.time () in
       let tag = (Printf.sprintf "expire_%f" now) in
-      let (>>=) = Lwt.bind in
       (* seems like clone_force might give us something stale? *)
       Irmin.clone_force task (t.cache "cloning for timeouts") tag >>= fun our_br ->
       Irmin.read_exn (our_br "read for timeouts") t.node >>= fun table ->
@@ -148,10 +147,9 @@ module Arp = struct
       (* TODO: this could stand to either not be committed if no changes happen,
          or to have a more informative commit message, or both *)
       Irmin.update (our_br "Arp.tick: updating to age out old entries") t.node updated >>= fun () ->
-      Irmin.merge "Arp.tick: merge expiry branch" our_br ~into:t.cache >>= function
-      | `Ok store -> Time.sleep arp_timeout >>= fun () -> tick t ()
-      | `Conflict str -> Irmin.update (t.cache str) t.node table >>= fun () ->
-        Time.sleep arp_timeout >>= fun () -> tick t ()
+      Irmin.merge_exn "Arp.tick: merge expiry branch" our_br ~into:t.cache >>=
+      fun () ->
+      Time.sleep arp_timeout >>= fun () -> tick t ()
 
     (* TODO: treatment of multicast ethernet address messages differs between
        routers and end hosts; we have no way of knowing which we are without
@@ -276,8 +274,6 @@ module Arp = struct
       with
       | Not_found ->
         let response, waker = MProf.Trace.named_wait "ARP response" in
-        let str = Printf.sprintf "Arp.query: query thread launched for ip %s"
-            (Ipaddr.V4.to_string ip) in
         Hashtbl.add (t.pending) ip waker;
         let rec retry n () =
           (* First request, so send a query packet *)
