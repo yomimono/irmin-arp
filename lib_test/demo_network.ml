@@ -1,6 +1,7 @@
 open Common
 open Lwt.Infix
 
+module A_fs = Irmin_arp.Arp.Make(E)(Clock)(OS.Time)(Irmin_backend_fs)
 module IPV4 = Ipv4.Make(E)(A_fs)
 module TCP = Tcp.Flow.Make(IPV4)(OS.Time)(Clock)(Random)
 
@@ -19,6 +20,14 @@ let root = "demo_results"
 
 let strip = Ipaddr.V4.to_string
 
+let get_arp ?(backend = blessed_backend) ~root ~node () =
+  or_error "backend" V.connect backend >>= fun netif ->
+  or_error "ethif" E.connect netif >>= fun ethif ->
+  let config = Irmin_storer_fs.config ~root () in
+  clear_cache config node >>= fun () ->
+  or_error "arp" (A_fs.connect ethif config) [node] >>= fun arp ->
+  Lwt.return (netif, ethif, arp)
+
 let arp_only_listener netif ethif arp () =
   let noop = fun _ -> Lwt.return_unit in
   V.listen netif (E.input 
@@ -26,7 +35,7 @@ let arp_only_listener netif ethif arp () =
                     ~arpv4:(fun buf -> A_fs.input arp buf)
                     ethif)
 
-let start_ip ip_addr (_c, _b, netif, ethif, arp) =
+let start_ip ip_addr (netif, ethif, arp) =
   IPV4.connect ethif arp >>= function
   | `Error e -> OUnit.assert_failure (Printf.sprintf "error starting ip %s"
                                         (Ipaddr.V4.to_string ip_addr))
@@ -65,14 +74,14 @@ let clients ~backend =
       Ipaddr.V4.of_int32 Int32.(add base (of_int offset))
   in
   let ips = List.map (fun number -> our_ip base number) (intlist 3 60 []) in
-  let name_repo ip = Printf.sprintf "%s/client_%s" root (Ipaddr.V4.to_string ip) in
+  let name_repo ip = Printf.sprintf "client_%s" (Ipaddr.V4.to_string ip) in
   let start_tcp (n, e, a, ip) =
     or_error "tcp" TCP.connect ip >>= fun tcp -> Lwt.return (n, e, a, ip, tcp)
   in
   let arps = Lwt_list.map_p
       (fun ip -> 
-         get_arp ~backend ~root:(name_repo ip) () >>= start_ip ip >>=
-         spawn_arp_listener >>= start_tcp
+         get_arp ~backend ~root ~node:(name_repo ip) () >>= 
+         start_ip ip >>= spawn_arp_listener >>= start_tcp
       ) ips
   in
   arps
@@ -88,13 +97,13 @@ let servers ~backend =
         TCP.write flow buf >>= fun _ -> Lwt.return_unit
       )
   in
-  let start_server ~root ~ip =
-    get_arp ~backend ~root () 
+  let start_server ~root ~node ~ip =
+    get_arp ~backend ~root ~node () 
     >>= start_ip ip
     >>= start_tcp_listener ~port:echo_port ~fn:echo
   in
-  start_server ~root:(root ^ "/server_1") ~ip:server_1_ip >>= fun s1 ->
-  start_server ~root:(root ^ "/server_2") ~ip:server_2_ip >>= fun s2 ->
+  start_server ~root ~node:"server_1" ~ip:server_1_ip >>= fun s1 ->
+  start_server ~root ~node:"server_2" ~ip:server_2_ip >>= fun s2 ->
   Lwt.return (s1, s2)
 
 let converse (_, _, _, client_ip, client_tcp) (_, _, _, server_ip, _, _) =
