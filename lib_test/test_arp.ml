@@ -47,7 +47,7 @@ module Fast_time = struct
 end
 
 module Test (I : Irmin.S_MAKER) = struct
-  module A = Irmin_arp.Arp.Make(E)(Clock)(OS.Time)(I)
+  module A = Irmin_arp.Arp.Make(E)(Fast_clock)(Fast_time)(I)
 
   type stack = {
     config: Irmin.config;
@@ -443,7 +443,7 @@ module Test (I : Irmin.S_MAKER) = struct
     local_copy listen >>= fun store ->
     Irmin.read_exn (store "readback of map") listen.node >>= fun map ->
     confirm map (first_ip, V.mac speak.netif) >>= fun () ->
-    OS.Time.sleep 65. >>= fun () ->
+    Fast_time.sleep 60. >>= fun () ->
     local_copy listen >>= fun store ->
     Irmin.read_exn (store "readback of map") listen.node >>= fun map ->
     OUnit.assert_raises Not_found (fun () -> T.find first_ip map);
