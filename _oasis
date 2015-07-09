@@ -35,7 +35,7 @@ Executable test_arp
   MainIs:         test_arp.ml
   CompiledObject: best
   Install:        false
-  BuildDepends:   irmin, irmin-arp, lwt, irmin.unix, ipaddr, tcpip.ethif, tcpip.ipv4, alcotest, oUnit, mirage-vnetif, mirage-types, mirage-clock-unix, mirage-unix, tcpip.arpv4
+  BuildDepends:   irmin, irmin-arp, lwt, irmin.unix, ipaddr, tcpip.ethif, tcpip.ipv4, alcotest, oUnit, mirage-vnetif, mirage-types, mirage-clock-unix, mirage-unix, tcpip.arpv4, mirage-profile, mirage-profile.unix
 
 Test test_ops
   Run$: flag(tests)
