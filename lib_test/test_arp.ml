@@ -170,7 +170,6 @@ module Test (I : Irmin.S_MAKER) = struct
     Lwt.return_unit
 
   let input_single_garp make_fn () =
-    (* use on-disk git fs for cache so we can read it back and check it ourselves *)
     let backend = blessed_backend in
     get_arp ~backend ~make_fn ~node:"listener" () >>= fun listen ->
     get_arp ~backend ~make_fn ~node:"speaker" () >>= fun speak ->
@@ -434,21 +433,20 @@ module Test (I : Irmin.S_MAKER) = struct
   let entries_aged_out make_fn () =
     let backend = blessed_backend in
     get_arp ~backend ~make_fn ~node:"speaker" () >>= fun speak ->
-    Irmin.create store speak.config Irmin_unix.task >>= fun store ->
-    Irmin.clone_force Irmin_unix.task (store "cloning for cache preseeding")
-      "entries_aged_out" >>= fun our_branch ->
-    Irmin.read_exn (our_branch "readback of map") speak.node >>= fun init_map ->
-    let seeded = T.add second_ip (Entry.Confirmed ((Clock.time () -. 9999999.),
-                                                   sample_mac)) init_map in
-    Irmin.update (our_branch "entries_aged_out: seed cache entry") speak.node
-      seeded >>= fun () ->
-    Irmin.merge_exn "entries_aged_out: merge seeded ARP entry" our_branch
-      ~into:store >>= fun () ->
-    (* we don't actually need to sleep for the expiry interval, we just need to
-       sleep for long enough that the expiry checker fires at least once *)
-    OS.Time.sleep 5. >>= fun () ->
-    Irmin.read_exn (store "readback of map") speak.node >>= fun map ->
-    OUnit.assert_raises Not_found (fun () -> T.find second_ip map);
+    get_arp ~backend ~make_fn ~node:"listener" () >>= fun listen ->
+    timeout_or ~timeout:2.0 ~msg:"Nothing received by listen.netif when trying to
+  do expiry test"
+      listen.netif (fun () -> A.set_ips speak.arp [ first_ip ] )
+      (fun () -> fun buf -> A.input listen.arp buf >>= fun () -> V.disconnect
+          listen.netif)
+    >>= fun () ->
+    local_copy listen >>= fun store ->
+    Irmin.read_exn (store "readback of map") listen.node >>= fun map ->
+    confirm map (first_ip, V.mac speak.netif) >>= fun () ->
+    OS.Time.sleep 65. >>= fun () ->
+    local_copy listen >>= fun store ->
+    Irmin.read_exn (store "readback of map") listen.node >>= fun map ->
+    OUnit.assert_raises Not_found (fun () -> T.find first_ip map);
     Lwt.return_unit
 end
 
