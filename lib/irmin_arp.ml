@@ -166,6 +166,9 @@ module Arp = struct
       Lwt.async (tick t);
       Lwt.return (`Ok t)
 
+    let push t remote =
+      Irmin.push (t.cache "pushing state to remote store") remote
+
     (* construct an arp record representing a gratuitious arp announcement for
        ip *)
     let garp t ip = Parse.garp (Ethif.mac t.ethif) ip

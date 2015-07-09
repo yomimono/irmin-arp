@@ -68,6 +68,11 @@ module Test (I : Irmin.S_MAKER) = struct
     | `Ok arp -> Lwt.return {config; node = [node]; backend; netif; ethif; arp;}
     | `Error e -> OUnit.assert_failure "Couldn't start ARP :("
 
+  let local_copy stack =
+    Irmin.create store stack.config Irmin_unix.task >>= fun cache ->
+    A.push stack.arp (Irmin.remote_basic (cache "make remote")) >>= function
+    | `Error -> OUnit.assert_failure "ARP didn't push cache to us"
+    | `Ok -> Lwt.return cache
 
   let first_ip = Ipaddr.V4.of_string_exn "192.168.3.1"
   let second_ip = Ipaddr.V4.of_string_exn "192.168.3.10"
@@ -84,7 +89,7 @@ module Test (I : Irmin.S_MAKER) = struct
        no bound IPs, empty cache, etc *)
     get_arp ~make_fn ~node:"__root__" () >>= fun stack ->
     OUnit.assert_equal [] (A.get_ips stack.arp);
-    Irmin.create store stack.config Irmin_unix.task >>= fun cache ->
+    local_copy stack >>= fun cache ->
     Irmin.read (cache "create_is_consistent checking for empty map") stack.node >>=
     function
     | None -> OUnit.assert_failure "Expected location of the cache was empty"
@@ -177,7 +182,7 @@ module Test (I : Irmin.S_MAKER) = struct
                      as read back from Irmin" (Ipaddr.V4.to_string ip))
     in
     (* load our own representation of the ARP cache of the listener *)
-    Irmin.create store listen.config Irmin_unix.task >>= fun cache ->
+    local_copy listen >>= fun cache ->
     Irmin.read_exn (cache "readback of map") listen.node >>= fun map ->
     confirm map (first_ip, (V.mac speak.netif)) >>= fun () ->
     Lwt.return_unit
@@ -206,7 +211,7 @@ module Test (I : Irmin.S_MAKER) = struct
     >>= fun () ->
     (* listen.config should have the ARP cache history reflecting the updates send
        by speak.arp; a current read should show us first_ip *)
-    Irmin.create store listen.config Irmin_unix.task >>= fun store ->
+    local_copy listen >>= fun store ->
     Irmin.read_exn (store "readback of map") listen.node >>= fun map ->
     (* TODO: iterate over the commit history of IPs *)
     try
@@ -248,21 +253,21 @@ module Test (I : Irmin.S_MAKER) = struct
     Lwt.join [ listen_fn () ; multiple_ips () ] >>= fun () ->
     OS.Time.sleep 0.5 >>= fun () ->
     (* load our own representation of the ARP cache of the listener *)
-    Irmin.create store listen.config Irmin_unix.task >>= fun cache ->
+    local_copy listen >>= fun cache ->
     Irmin.read_exn (cache "readback of map") listen.node >>= fun imap ->
     let confirm map (ip, mac) =
       try
         let open Entry in
         match T.find ip map with
-        | Confirmed (time, entry) -> OUnit.assert_equal ~printer:Macaddr.to_string
-                                       entry mac;
+        | Confirmed (time, entry) -> 
+          OUnit.assert_equal ~printer:Macaddr.to_string entry mac;
           Lwt.return_unit
       with
         Not_found ->
         A.pp Format.err_formatter listen.arp >>= fun () ->
-        OUnit.assert_failure (Printf.sprintf
-                                "Expected cache entry %s not found in listener cache map
-                     )" (Ipaddr.V4.to_string ip))
+        OUnit.assert_failure 
+          (Printf.sprintf "Expected cache entry %s not found in listener cache map)" 
+             (Ipaddr.V4.to_string ip))
     in
     confirm imap (first_ip, (V.mac speaker1.netif)) >>= fun () ->
     confirm imap (second_ip, (V.mac speaker2.netif)) >>= fun () ->
@@ -292,7 +297,7 @@ module Test (I : Irmin.S_MAKER) = struct
     OS.Time.sleep 0.5 >>= fun () ->
     (* listen.config should have the ARP cache history reflecting the updates send
        by speak.arp; a current read should show us first_ip *)
-    Irmin.create store listen.config Irmin_unix.task >>= fun store ->
+    local_copy listen >>= fun store ->
     Irmin.read_exn (store "readback of map") listen.node >>= fun map ->
     (* TODO: iterate over the commit history of IPs *)
     try
@@ -342,7 +347,7 @@ module Test (I : Irmin.S_MAKER) = struct
     (* shouldn't be anything in the cache as a result of all that nonsense *)
     (* TODO: in fact, shouldn't ever have been anything in the cache as a result
        of all that nonsense *)
-    Irmin.create store listen.config Irmin_unix.task >>= fun store ->
+    local_copy listen >>= fun store ->
     Irmin.read_exn (store "readback of map") listen.node >>= fun map ->
     OUnit.assert_equal T.empty map;
     Lwt.return_unit
