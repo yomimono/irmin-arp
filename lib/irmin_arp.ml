@@ -100,6 +100,8 @@ module Arp = struct
       mutable bound_ips: ipaddr list; 
       (* mutable for compability with existing ipv4 code :( *)
       node: T.Path.t;
+      config: Irmin.config;
+      store: (T.Path.t, T.t) Irmin.basic;
       pending: (ipaddr, result Lwt.u) Hashtbl.t;
       (* use a hashtable, since everything else in here is mutable :( *)
       cache: cache
@@ -165,7 +167,7 @@ module Arp = struct
       Irmin.create store config task >>= fun cache ->
       Irmin.update (cache "Arp.create: Initial empty cache") node T.empty 
       >>= fun () ->
-      let t = { ethif; bound_ips = []; node; cache; pending = Hashtbl.create 4 } in
+      let t = { ethif; bound_ips = []; node; config; store; cache; pending = Hashtbl.create 4 } in
       Lwt.async (tick t);
       Lwt.return (`Ok t)
 
@@ -201,12 +203,12 @@ module Arp = struct
     let get_ips t = t.bound_ips
 
     let notify t ip mac =
-      let merge str new_table our_br = 
+      let merge str new_table our_br head = 
         Irmin.update (our_br ("Arp.notify: " ^ str)) t.node new_table >>= fun () ->
         Irmin.merge_exn "Arp.notify: merge notify branch" our_br ~into:t.cache
       in
-      let tag = "notify" in
-      clone_nicely task (t.cache "cloning for update") tag >>= fun (_, our_br) ->
+      Irmin.head_exn (t.cache "starting update") >>= fun head ->
+      Irmin.of_head t.store t.config task head >>= fun our_br ->
       Irmin.read_exn (our_br "lookup") t.node >>= fun table ->
       let now = Clock.time () in
       let expire = now +. arp_timeout in
@@ -216,13 +218,13 @@ module Arp = struct
         let w = Hashtbl.find t.pending ip in
         let str = "query answered: " ^ Ipaddr.V4.to_string ip ^ " -> " ^
                   Macaddr.to_string mac in
-        merge str updated our_br >>= fun () ->
+        merge str updated our_br head >>= fun () ->
         Lwt.wakeup w (`Ok mac);
         Lwt.return_unit
       | false ->
         let str = "gratuitous arp: " ^ Ipaddr.V4.to_string ip ^ " -> " ^
                   Macaddr.to_string mac in
-        merge str updated our_br
+        merge str updated our_br head
 
     let probe t ip =
       let source_ip = match t.bound_ips with
