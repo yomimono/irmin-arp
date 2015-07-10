@@ -111,14 +111,6 @@ module Arp = struct
 
     let (>>=) = Lwt.bind
 
-    let rec clone_nicely task cache tag =
-      Irmin.clone task cache tag >>= function
-      | `Ok branch -> Lwt.return (tag, branch)
-      | `Duplicated_tag ->
-        let now = Clock.time () in
-        let new_tag = tag ^ "-" ^ (string_of_float now) ^ "0" in
-        clone_nicely task cache new_tag
-
     let pp fmt t =
       Irmin.read_exn (t.cache "read map for prettyprint") t.node >>= fun map ->
       Format.fprintf fmt "%s" (Ezjsonm.to_string (Ezjsonm.wrap (T.to_json
@@ -289,12 +281,6 @@ module Arp = struct
             end else begin
               let str = Printf.sprintf "Arp.query: query thread timed out for ip %s"
                   (Ipaddr.V4.to_string ip) in
-              Hashtbl.remove (t.pending) ip;
-              clone_nicely task (t.cache str) "query_timeout" >>= fun (_, our_branch) ->
-              Irmin.read_exn (our_branch "Arp.query") t.node >>= fun table ->
-              let updated = T.remove ip table in
-              Irmin.update (our_branch str) t.node updated >>= fun () ->
-              Irmin.merge_exn str our_branch ~into:t.cache >>= fun () ->
               Lwt.wakeup waker `Timeout;
               Lwt.return_unit
             end
