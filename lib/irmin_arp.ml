@@ -146,8 +146,8 @@ module Arp = struct
         (Macaddr.to_string arp.tha) (Ipaddr.V4.to_string arp.tpa)
 
     let rec tick t () =
-      let tag = "expire" in
-      clone_nicely task (t.cache "cloning for timeouts") tag >>= fun (_tag, our_br) ->
+      Irmin.head_exn (t.cache "starting expiry") >>= fun head ->
+      Irmin.of_head t.store t.config task head >>= fun our_br ->
       Irmin.read_exn (our_br "read for timeouts") t.node >>= fun table ->
       let now = Clock.time () in
       let updated = T.expire table now in
