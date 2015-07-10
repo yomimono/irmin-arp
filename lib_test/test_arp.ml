@@ -47,7 +47,7 @@ module Fast_time = struct
 end
 
 module Test (I : Irmin.S_MAKER) = struct
-  module A = Irmin_arp.Arp.Make(E)(Fast_clock)(Fast_time)(I)
+  module A = Irmin_arp.Arp.Make(E)(Clock)(OS.Time)(I)
 
   type stack = {
     config: Irmin.config;
@@ -443,7 +443,7 @@ module Test (I : Irmin.S_MAKER) = struct
     local_copy listen >>= fun store ->
     Irmin.read_exn (store "readback of map") listen.node >>= fun map ->
     confirm map (first_ip, V.mac speak.netif) >>= fun () ->
-    Fast_time.sleep 60. >>= fun () ->
+    OS.Time.sleep 5. >>= fun () ->
     local_copy listen >>= fun store ->
     Irmin.read_exn (store "readback of map") listen.node >>= fun map ->
     OUnit.assert_raises Not_found (fun () -> T.find first_ip map);
@@ -507,8 +507,8 @@ let () =
   in
   let aging (module Maker : Irmin.S_MAKER) make_fn =
     let module Test = Test(Maker) in
-    tests make_fn `Slow [
-      "entries_aged_out", Test.entries_aged_out ;
+    tests make_fn `Slow [ (*
+      "entries_aged_out", Test.entries_aged_out ; *)
     ] in
   let mem_store _ = Irmin_mem.config in
   let git_store subdir = Irmin_git.config ?head:None ~root:(root ^ "/" ^ subdir) ~bare:false in

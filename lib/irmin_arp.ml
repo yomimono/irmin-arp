@@ -81,8 +81,6 @@ module Arp = struct
       | _ -> false
   end
 
-  (* TODO: to pass an initial entry to the table, we must functorize T;
-     otherwise, the caller can't know whaat kind of thing to pass us. *)
   (* much cribbed from mirage-tcpip/lib/arpv4.ml *)
   module Make (Ethif : V1_LWT.ETHIF) (Clock: V1.CLOCK) (Time: V1_LWT.TIME) 
       (Maker : Irmin.S_MAKER) = struct
@@ -116,7 +114,7 @@ module Arp = struct
       | `Ok branch -> Lwt.return (tag, branch)
       | `Duplicated_tag ->
         let now = Clock.time () in
-        let new_tag = tag ^ "-" ^ (string_of_float now) in
+        let new_tag = tag ^ "-" ^ (string_of_float now) ^ "0" in
         clone_nicely task cache new_tag
 
     let pp fmt t =
@@ -146,10 +144,10 @@ module Arp = struct
         (Macaddr.to_string arp.tha) (Ipaddr.V4.to_string arp.tpa)
 
     let rec tick t () =
-      let now = Clock.time () in
       let tag = "expire" in
       clone_nicely task (t.cache "cloning for timeouts") tag >>= fun (_tag, our_br) ->
       Irmin.read_exn (our_br "read for timeouts") t.node >>= fun table ->
+      let now = Clock.time () in
       let updated = T.expire table now in
       (* TODO: this could stand to either not be committed if no changes happen,
          or to have a more informative commit message, or both *)
@@ -203,15 +201,15 @@ module Arp = struct
     let get_ips t = t.bound_ips
 
     let notify t ip mac =
-      let now = Clock.time () in
-      let expire = now +. arp_timeout in
-      let tag = "notify" in
       let merge str new_table our_br = 
         Irmin.update (our_br ("Arp.notify: " ^ str)) t.node new_table >>= fun () ->
         Irmin.merge_exn "Arp.notify: merge notify branch" our_br ~into:t.cache
       in
+      let tag = "notify" in
       clone_nicely task (t.cache "cloning for update") tag >>= fun (_, our_br) ->
       Irmin.read_exn (our_br "lookup") t.node >>= fun table ->
+      let now = Clock.time () in
+      let expire = now +. arp_timeout in
       let updated = T.add ip (Entry.Confirmed (expire, mac)) table in
       match Hashtbl.mem t.pending ip with
       | true ->
