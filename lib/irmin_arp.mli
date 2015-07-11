@@ -20,6 +20,11 @@ module Arp : sig
   sig
     include V1_LWT.ARP
     val push : t -> Irmin.remote -> [ `Error | `Ok ] io
-    val connect : Ethif.t -> Irmin.config -> string list -> [> `Ok of t | `Error of error ] io
+    val connect : 
+      Ethif.t ->
+      Irmin.config ->
+      pull:Irmin.remote list ->
+      node:string list ->
+      [> `Ok of t | `Error of error ] io
   end
 end

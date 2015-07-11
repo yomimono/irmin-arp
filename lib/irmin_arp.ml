@@ -102,6 +102,7 @@ module Arp = struct
       node: T.Path.t;
       config: Irmin.config;
       store: (T.Path.t, T.t) Irmin.basic;
+      pull: Irmin.remote list;
       pending: (ipaddr, result Lwt.u) Hashtbl.t;
       (* use a hashtable, since everything else in here is mutable :( *)
       cache: cache
@@ -153,13 +154,14 @@ module Arp = struct
     (* TODO: treatment of multicast ethernet address messages differs between
        routers and end hosts; we have no way of knowing which we are without
        taking a setup parameter. *)
-    let connect ethif config (node : string list) =
+    let connect ethif config ~pull ~node =
       let store = Irmin.basic (module Maker) (module T) in
       let node = T.Path.create node in
       Irmin.create store config task >>= fun cache ->
       Irmin.update (cache "Arp.create: Initial empty cache") node T.empty 
       >>= fun () ->
-      let t = { ethif; bound_ips = []; node; config; store; cache; pending = Hashtbl.create 4 } in
+      let t = { ethif; bound_ips = []; node; config; store; cache; pull; 
+                pending = Hashtbl.create 4 } in
       Lwt.async (tick t);
       Lwt.return (`Ok t)
 
