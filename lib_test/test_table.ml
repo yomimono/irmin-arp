@@ -20,8 +20,7 @@ let update_and_readback map t ~update_msg ~readback_msg node
   Lwt.return (T.to_map map)
 
 let clone_update t ~read_msg ~update_msg ~branch_name node fn =
-  let now = int_of_float (Unix.time ()) in
-  let name = branch_name (* ^ "-" ^ (string_of_int now) *) in
+  let name = branch_name in
   Irmin.clone_force Irmin_unix.task (t read_msg) name >>= fun branch ->
   fn branch node >>= fun map ->
   Irmin.update (branch update_msg) node (T.of_map map) >>=
