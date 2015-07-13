@@ -1,7 +1,7 @@
 open Common
 open Lwt.Infix
 
-module A_fs = Irmin_arp.Arp.Make(E)(Clock)(OS.Time)(Irmin_backend_fs)
+module A_fs = Irmin_arp.Arp.Make(E)(Clock)(OS.Time)(Random)(Irmin_backend_fs)
 module IPV4 = Ipv4.Make(E)(A_fs)
 module TCP = Tcp.Flow.Make(IPV4)(OS.Time)(Clock)(Random)
 
