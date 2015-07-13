@@ -83,7 +83,7 @@ module Arp = struct
 
   (* much cribbed from mirage-tcpip/lib/arpv4.ml *)
   module Make (Ethif : V1_LWT.ETHIF) (Clock: V1.CLOCK) (Time: V1_LWT.TIME)
-      (Maker : Irmin.S_MAKER) = struct
+      (Random: V1.RANDOM) (Maker : Irmin.S_MAKER) = struct
     module T = Table.Make(Irmin.Path.String_list)
     module I = Irmin.Basic (Maker) (T)
     type cache = (string -> ([ `BC ], T.Path.t, T.t) Irmin.t)
@@ -111,6 +111,11 @@ module Arp = struct
     type id = t
 
     let (>>=) = Lwt.bind
+
+    let dither_wait time =
+      (* adjust a minimum wait time by some small amount of ms *)
+      let ep = Random.int 10 in
+      time +. ((float_of_int ep) *. 0.001)
 
     let pp fmt t =
       Irmin.read_exn (t.cache "read map for prettyprint") t.node >>= fun map ->
@@ -149,7 +154,7 @@ module Arp = struct
       Irmin.update (our_br "Arp.tick: updating to age out old entries") t.node updated >>= fun () ->
       Irmin.merge_exn "Arp.tick: merge expiry branch" our_br ~into:t.cache >>=
       fun () ->
-      Time.sleep expiry_check_interval >>= fun () -> tick t ()
+      Time.sleep (dither_wait expiry_check_interval) >>= fun () -> tick t ()
 
     (* TODO: treatment of multicast ethernet address messages differs between
        routers and end hosts; we have no way of knowing which we are without
@@ -193,6 +198,7 @@ module Arp = struct
       let store = Irmin.basic (module Maker) (module T) in
       let node = T.Path.create node in
       let owner = String.concat "/" node in
+      Random.self_init ();
       Irmin.create store config (task owner) >>= fun cache ->
       aux cache pull >>= function
       | `Error s -> Lwt.return (`Error s)
@@ -310,7 +316,8 @@ module Arp = struct
           (* First request, so send a query packet *)
           output_probe t ip >>= fun () ->
           Lwt.choose [ (response >>= fun _ -> Lwt.return `Ok);
-                       (Time.sleep probe_repeat_delay >>= fun () -> Lwt.return `Timeout)
+                       (Time.sleep (dither_wait probe_repeat_delay)
+                        >>= fun () -> Lwt.return `Timeout)
                      ] >>= function
           | `Ok -> Lwt.return_unit
           | `Timeout ->

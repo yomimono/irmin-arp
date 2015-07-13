@@ -15,8 +15,8 @@ module Arp : sig
                                       | `Unusable
                                       | `Bad_mac of string list ]
   end
-  module Make (Ethif : V1_LWT.ETHIF) (Clock: V1.CLOCK) (Time: V1_LWT.TIME) 
-      (Maker : Irmin.S_MAKER) :
+  module Make (Ethif : V1_LWT.ETHIF) (Clock: V1.CLOCK) (Time: V1_LWT.TIME)
+      (Random: V1.RANDOM) (Maker : Irmin.S_MAKER) :
   sig
     include V1_LWT.ARP with type error =
     [
