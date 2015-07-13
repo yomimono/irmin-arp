@@ -93,7 +93,7 @@ module Arp = struct
     type macaddr = Macaddr.t
     type buffer = Cstruct.t
     type 'a io = 'a Lwt.t
-    type error = [ `Unknown of string ]
+    type error = [ `Fs | `Network | `Semantics | `Unknown of string ]
 
     type t = { 
       ethif: Ethif.t;
