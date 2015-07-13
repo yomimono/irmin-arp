@@ -15,13 +15,12 @@ module Test (I : Irmin.S_MAKER) = struct
 
   let store = Irmin.basic (module I) (module T)
 
-  let get_arp ?(backend = blessed_backend) ~(make_fn : unit -> Irmin.config) ~node 
+  let get_arp ?(backend = blessed_backend) ~(make_fn : unit -> Irmin.config) ~node
       ?(pull=[])() =
     or_error "backend" V.connect backend >>= fun netif ->
     or_error "ethif" E.connect netif >>= fun ethif ->
     let config = make_fn () in
     let node = [node] in
-    let pull = [] in
     A.connect ethif config ~node ~pull >>= function
     | `Ok arp -> Lwt.return {config; node; backend; netif; ethif; arp;}
     | `Error e -> OUnit.assert_failure "Couldn't start ARP :("
@@ -44,6 +43,18 @@ module Test (I : Irmin.S_MAKER) = struct
            "Expected cache entry %s not found in listener cache map)"
            (Ipaddr.V4.to_string ip)) in
       OUnit.assert_failure err
+
+  let seed_cache make_fn node map =
+    let task =
+      let owner = "irmin_arp testing cache seeder bot (tm)" in
+      Irmin.Task.create ~date:(Int64.of_float (Clock.time ())) ~owner
+    in
+    let config = make_fn () in (* for disk backends, this will be literally
+                                    the same repo; for in-memory, not so *)
+    Irmin.create store config task >>= fun cache ->
+    Irmin.update (cache "test_arp: seed_cache") node map >>= fun () ->
+    Lwt.return cache
+
 
   let first_ip = Ipaddr.V4.of_string_exn "192.168.3.1"
   let second_ip = Ipaddr.V4.of_string_exn "192.168.3.10"
@@ -331,31 +342,20 @@ module Test (I : Irmin.S_MAKER) = struct
                                                            test_arp));
     Lwt.return_unit
 
-  let seed_cache make_fn node map =
-    let config = make_fn () in (* for disk backends, this will be literally
-                                    the same repo; for in-memory, not so *)
-    Irmin.create store config Irmin_unix.task >>= fun cache ->
-    Irmin.update (cache "seed cache") node map >>= fun () ->
-    Lwt.return cache
-
   let query_with_seeded_cache make_fn () =
     let backend = blessed_backend in
     (* gotta make a store with this in it *)
-    let seeded = 
-      let map = 
-        T.add second_ip (Entry.Confirmed ((Clock.time () +. 60.), sample_mac)) (T.empty)
-      in
-      seed_cache make_fn ["speaker"] map
+    let make_seeded_cache node (ip, entry) =
+      let map = T.add ip entry (T.empty) in
+      seed_cache make_fn node map
     in
+    let entry = Entry.Confirmed ((Clock.time () +.  60.), sample_mac) in
+    let seeded = make_seeded_cache ["speaker"] (second_ip, entry) in
     seeded >>= fun seeded_cache ->
     let poll_remote = Irmin.remote_basic (seeded_cache "make remote") in
+    get_arp ~backend ~make_fn ~node:"listener" ~pull:[] () >>= fun listen ->
     get_arp ~backend ~make_fn ~node:"speaker" ~pull:[poll_remote] () >>= fun speak ->
     A.set_ips speak.arp [ first_ip ] >>= fun () ->
-    get_arp ~backend ~make_fn ~node:"listener" ~pull:[] () >>= fun listen ->
-    Irmin.create store speak.config Irmin_unix.task >>= fun store ->
-    Irmin.read (store "readback of map") speak.node >>= function
-    | None -> OUnit.assert_failure "Couldn't read store from query_with_seeded_map"
-    | Some map ->
       (* OK, since we seeded the cache, calling query for that key
          should not emit an ARP query and should return straight away *)
       timeout_or ~timeout:0.5 ~msg:"Query sent for something that was seeded in
@@ -402,22 +402,23 @@ module Test (I : Irmin.S_MAKER) = struct
 
   let entries_aged_out make_fn () =
     let backend = blessed_backend in
-    get_arp ~backend ~make_fn ~node:"speaker" () >>= fun speak ->
-    get_arp ~backend ~make_fn ~node:"listener" () >>= fun listen ->
-    timeout_or ~timeout:2.0 ~msg:"Nothing received by listen.netif when trying to
-  do expiry test"
-      listen.netif (fun () -> A.set_ips speak.arp [ first_ip ] )
-      (fun () -> fun buf -> A.input listen.arp buf >>= fun () -> V.disconnect
-          listen.netif)
-    >>= fun () ->
+    let expiry = Clock.time () +. 1. in
+    let seeded_map = T.add first_ip (Entry.Confirmed (expiry, sample_mac)) T.empty in
+    seed_cache make_fn ["listener"] seeded_map >>= fun sour_milk ->
+    let sour_cream = Irmin.remote_basic (sour_milk "make remote") in
+    get_arp ~backend ~make_fn ~node:"listener" ~pull:[sour_cream] () >>= fun listen ->
+    (* now you see it *)
     local_copy listen >>= fun store ->
     Irmin.read_exn (store "readback of map") listen.node >>= fun map ->
-    confirm map (first_ip, V.mac speak.netif) >>= fun () ->
-    OS.Time.sleep 5. >>= fun () ->
+    confirm map (first_ip, sample_mac) >>= fun () ->
+    (* nothing up my sleeve *)
+    OS.Time.sleep 2. >>= fun () ->
+    (* now you don't! *)
     local_copy listen >>= fun store ->
     Irmin.read_exn (store "readback of map") listen.node >>= fun map ->
     OUnit.assert_raises Not_found (fun () -> T.find first_ip map);
     Lwt.return_unit
+
 end
 
 let lwt_run f () = Lwt_main.run (f ())
