@@ -36,6 +36,20 @@ let arp_only_listener netif ethif arp () =
                     ~arpv4:(fun buf -> A_fs.input arp buf)
                     ethif)
 
+let arp_and_tcp_listeners netif ethif arp ip tcp () =
+        V.listen netif (E.input
+                          ~ipv6:(fun buf -> Lwt.return_unit)
+                          ~arpv4:(fun buf -> A_fs.input arp buf)
+                          ~ipv4:(
+                            IPV4.input
+                              ~tcp:(TCP.input tcp ~listeners:(fun _ -> None))
+                              ~udp:(fun ~src ~dst _buf -> Lwt.return_unit)
+                              ~default:(fun ~proto ~src ~dst _ -> Lwt.return_unit)
+                              ip
+                          )
+                          ethif )
+
+
 let start_ip ip_addr (netif, ethif, arp) =
   IPV4.connect ethif arp >>= function
   | `Error e -> OUnit.assert_failure (Printf.sprintf "error starting ip %s"
@@ -44,9 +58,10 @@ let start_ip ip_addr (netif, ethif, arp) =
     IPV4.set_ip i ip_addr >>= fun () -> IPV4.set_ip_netmask i netmask >>= fun () ->
     Lwt.return (netif, ethif, arp, i)
 
-let spawn_arp_listener (netif, ethif, arp, i) =
-  Lwt.async (arp_only_listener netif ethif arp);
-  Lwt.return (netif, ethif, arp, i)
+let spawn_listeners (netif, ethif, arp, ip, tcp) =
+  (* TODO: an async_hook for error reporting would be nice *)
+  Lwt.async (arp_and_tcp_listeners netif ethif arp ip tcp);
+  Lwt.return (netif, ethif, arp, ip, tcp)
 
 let start_tcp_listener ~port ~fn (netif, ethif, arp, ip) =
   let chooser = function | n when n = port -> Some fn | _ -> None in
@@ -64,7 +79,8 @@ let start_tcp_listener ~port ~fn (netif, ethif, arp, ip) =
                         ~default:(fun ~proto ~src ~dst _ -> Lwt.return_unit)
                         ip
                     )
-                    ethif ) ) in
+                    ethif ) 
+  ) in
   Lwt.return (netif, ethif, arp, ip, tcp, listener)
 
 let clients ~backend =
@@ -74,7 +90,7 @@ let clients ~backend =
   let our_ip base offset =
       Ipaddr.V4.of_int32 Int32.(add base (of_int offset))
   in
-  let ips = List.map (fun number -> our_ip base number) (intlist 3 4 []) in
+  let ips = List.map (fun number -> our_ip base number) (intlist 3 60 []) in
   let name_repo ip = Printf.sprintf "client_%s" (Ipaddr.V4.to_string ip) in
   let start_tcp (n, e, a, ip) =
     or_error "tcp" TCP.connect ip >>= fun tcp -> Lwt.return (n, e, a, ip, tcp)
@@ -82,7 +98,7 @@ let clients ~backend =
   let arps = Lwt_list.map_p
       (fun ip ->
          get_arp ~backend ~root ~node:(name_repo ip) () >>=
-         start_ip ip >>= spawn_arp_listener >>= start_tcp
+         start_ip ip >>= start_tcp >>= spawn_listeners
       ) ips
   in
   arps
@@ -107,14 +123,55 @@ let servers ~backend =
   start_server ~root ~node:"server_2" ~ip:server_2_ip >>= fun s2 ->
   Lwt.return (s1, s2)
 
-let converse (_, _, _, client_ip, client_tcp) (_, _, _, server_ip, _, _) =
+let clients ~backend =
+  let rec intlist s e acc =
+    if s = e then List.rev (s::acc) else intlist (s+1) e (s::acc) in
+  let base = Ipaddr.V4.to_int32 (Ipaddr.V4.of_string_exn "192.168.252.0") in
+  let our_ip base offset =
+      Ipaddr.V4.of_int32 Int32.(add base (of_int offset))
+  in
+  let ips = List.map (fun number -> our_ip base number) (intlist 3 60 []) in
+  let name_repo ip = Printf.sprintf "client_%s" (Ipaddr.V4.to_string ip) in
+  let start_tcp (n, e, a, ip) =
+    or_error "tcp" TCP.connect ip >>= fun tcp -> Lwt.return (n, e, a, ip, tcp)
+  in
+  let arps = Lwt_list.map_p
+      (fun ip ->
+         get_arp ~backend ~root ~node:(name_repo ip) () >>=
+         start_ip ip >>= start_tcp >>= spawn_listeners
+      ) ips
+  in
+  arps
+
+let servers ~backend =
+  let echo flow =
+    let ignore_errors fn = function
+      | `Ok q -> fn q
+      | `Error _ | `Eof -> Lwt.return_unit
+    in
+    (* try echoing, but don't really mind if we fail *)
+    TCP.read flow >>= ignore_errors (fun buf ->
+        TCP.write flow buf >>= fun _ -> Lwt.return_unit
+      )
+  in
+  let start_server ~root ~node ~ip =
+    get_arp ~backend ~root ~node ()
+    >>= start_ip ip
+    >>= start_tcp_listener ~port:echo_port ~fn:echo
+  in
+  start_server ~root ~node:"server_1" ~ip:server_1_ip >>= fun s1 ->
+  start_server ~root ~node:"server_2" ~ip:server_2_ip >>= fun s2 ->
+  Lwt.return (s1, s2)
+
+let converse 
+    (client_backend, client_netif, client_ethif, client_ip, client_tcp) 
+    (_, _, _, server_ip, _, _) =
   (* every second, bother the other end and see whether they have anything to
      say back to us *)
   let dest = List.hd (IPV4.get_ip server_ip) in
   let src = List.hd (IPV4.get_ip client_ip) in
-  Log.info "DEMO: trying connection from %s to %s on port %d"
+  Log.warn "DEMO: trying connection from %s to %s on port %d"
     (Ipaddr.V4.to_string src) (Ipaddr.V4.to_string dest) echo_port;
-
   TCP.create_connection client_tcp (List.hd (IPV4.get_ip server_ip), echo_port)
   >>= function
   | `Error _ -> Lwt.fail (failwith "couldn't establish connection between client and server")
@@ -123,10 +180,10 @@ let converse (_, _, _, client_ip, client_tcp) (_, _, _, server_ip, _, _) =
       let important_content = Cstruct.of_string "hi I love you I missed you" in
       TCP.write flow important_content >>= fun _ ->
       TCP.read flow >>= fun _ ->
-      OS.Time.sleep 1.0 >>= fun () -> pester flow
+      OS.Time.sleep 5.0 >>= fun () -> pester flow
     in
     let strip ip = IPV4.get_ip ip |> List.hd |> Ipaddr.V4.to_string in
-    Log.info "DEMO: connection established between %s and %s!" (strip client_ip)
+    Log.warn "DEMO: connection established between %s and %s!" (strip client_ip)
       (strip server_ip);
     pester flow
 
@@ -134,7 +191,7 @@ let ok_go () = (*
   let buffer = MProf_unix.mmap_buffer ~size:1000000 "demo_network_trace.ctf" in
   let trace_config = MProf.Trace.Control.make buffer MProf_unix.timestamper in
   MProf.Trace.Control.start trace_config; *)
-  Log.set_log_level Log.INFO;
+  Log.set_log_level Log.WARN;
   Log.color_on ();
   Log.set_output stdout;
   let backend = B.create ~yield:(fun () -> Lwt_main.yield ()) ~use_async_readers:true () in
