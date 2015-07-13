@@ -1,51 +1,6 @@
 open Lwt
 open Common
 
-let time_reduction_factor = 60.
-
-module Fast_clock = struct
-
-  let last_read = ref (Clock.time ())
-
-  (* from mirage/types/V1.mli module type CLOCK *)
-  type tm =
-    { tm_sec: int;               (** Seconds 0..60 *)
-      tm_min: int;               (** Minutes 0..59 *)
-      tm_hour: int;              (** Hours 0..23 *)
-      tm_mday: int;              (** Day of month 1..31 *)
-      tm_mon: int;               (** Month of year 0..11 *)
-      tm_year: int;              (** Year - 1900 *)
-      tm_wday: int;              (** Day of week (Sunday is 0) *)
-      tm_yday: int;              (** Day of year 0..365 *)
-      tm_isdst: bool;            (** Daylight time savings in effect *)
-    }
-
-  let gmtime time =
-    let tm = Clock.gmtime time in
-    {
-      tm_sec = tm.Clock.tm_sec;
-      tm_min = tm.Clock.tm_min;
-      tm_hour = tm.Clock.tm_hour;
-      tm_mday = tm.Clock.tm_mday;
-      tm_mon = tm.Clock.tm_mon;
-      tm_year = tm.Clock.tm_year;
-      tm_wday = tm.Clock.tm_wday;
-      tm_yday = tm.Clock.tm_yday;
-      tm_isdst = tm.Clock.tm_isdst;
-    }
-
-  let time () =
-    let this_time = Clock.time () in
-    let clock_diff = ((this_time -. !last_read) *. time_reduction_factor) in
-    last_read := this_time;
-    this_time +. clock_diff
-
-end
-module Fast_time = struct
-  type 'a io = 'a Lwt.t
-  let sleep time = OS.Time.sleep (time /. time_reduction_factor)
-end
-
 module Test (I : Irmin.S_MAKER) = struct
   module A = Irmin_arp.Arp.Make(E)(Clock)(OS.Time)(I)
 
@@ -80,13 +35,13 @@ module Test (I : Irmin.S_MAKER) = struct
   let confirm map (ip, mac) =
     try
       match T.find ip map with
-      | Entry.Confirmed (time, entry) -> 
+      | Entry.Confirmed (time, entry) ->
         OUnit.assert_equal ~printer:Macaddr.to_string entry mac;
         Lwt.return_unit
     with
     | Not_found ->
-      let err = (Printf.sprintf 
-           "Expected cache entry %s not found in listener cache map)" 
+      let err = (Printf.sprintf
+           "Expected cache entry %s not found in listener cache map)"
            (Ipaddr.V4.to_string ip)) in
       OUnit.assert_failure err
 
@@ -96,7 +51,7 @@ module Test (I : Irmin.S_MAKER) = struct
 
   let send_buf_sleep_then_dc speak_netif listen_netif bufs () =
     Lwt.join (List.map (V.write speak_netif) bufs) >>= fun () ->
-    Fast_time.sleep 0.1 >>= fun () ->
+    OS.Time.sleep 0.1 >>= fun () ->
     V.disconnect listen_netif
 
   let create_is_consistent make_fn () =
@@ -522,8 +477,8 @@ let () =
   in
   let aging (module Maker : Irmin.S_MAKER) make_fn =
     let module Test = Test(Maker) in
-    tests make_fn `Slow [ (*
-      "entries_aged_out", Test.entries_aged_out ; *)
+    tests make_fn `Slow [
+      "entries_aged_out", Test.entries_aged_out ;
     ] in
   let mem_store _ = Irmin_mem.config in
   let git_store subdir = Irmin_git.config ?head:None ~root:(root ^ "/" ^ subdir) ~bare:false in
