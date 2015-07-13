@@ -47,11 +47,11 @@ module Arp = struct
       set_arp_tpa buf tpa;
       buf
 
-    let arp_of_cstruct buf = 
+    let arp_of_cstruct buf =
       let open Arpv4_wire in
       let unusable buf =
         (* we only know how to deal with ethernet <-> IPv4 *)
-        get_arp_htype buf <> 1 || get_arp_ptype buf <> 0x0800 
+        get_arp_htype buf <> 1 || get_arp_ptype buf <> 0x0800
         || get_arp_hlen buf <> 6 || get_arp_plen buf <> 4
       in
       if (Cstruct.len buf) < sizeof_arp then `Too_short else begin
@@ -70,8 +70,8 @@ module Arp = struct
           | Some src_mac, Some target_mac ->
             let src_ip = Ipaddr.V4.of_int32 (get_arp_spa buf) in
             let target_ip = Ipaddr.V4.of_int32 (get_arp_tpa buf) in
-            `Ok { op; 
-                  sha = src_mac; spa = src_ip; 
+            `Ok { op;
+                  sha = src_mac; spa = src_ip;
                   tha = target_mac; tpa = target_ip
                 }
         end
@@ -82,7 +82,7 @@ module Arp = struct
   end
 
   (* much cribbed from mirage-tcpip/lib/arpv4.ml *)
-  module Make (Ethif : V1_LWT.ETHIF) (Clock: V1.CLOCK) (Time: V1_LWT.TIME) 
+  module Make (Ethif : V1_LWT.ETHIF) (Clock: V1.CLOCK) (Time: V1_LWT.TIME)
       (Maker : Irmin.S_MAKER) = struct
     module T = Table.Make(Irmin.Path.String_list)
     module I = Irmin.Basic (Maker) (T)
@@ -95,18 +95,18 @@ module Arp = struct
     type 'a io = 'a Lwt.t
     type error = [ `Fs | `Network | `Semantics | `Unknown of string ]
 
-    type t = { 
+    type t = {
       ethif: Ethif.t;
-      mutable bound_ips: ipaddr list; 
+      mutable bound_ips: ipaddr list;
       (* mutable for compability with existing ipv4 code :( *)
       node: T.Path.t;
+      owner: string;
       config: Irmin.config;
       store: (T.Path.t, T.t) Irmin.basic;
-      pull: Irmin.remote list;
       pending: (ipaddr, result Lwt.u) Hashtbl.t;
       (* use a hashtable, since everything else in here is mutable :( *)
       cache: cache
-    } 
+    }
 
     type id = t
 
@@ -114,33 +114,33 @@ module Arp = struct
 
     let pp fmt t =
       Irmin.read_exn (t.cache "read map for prettyprint") t.node >>= fun map ->
-      Format.fprintf fmt "%s" (Ezjsonm.to_string (Ezjsonm.wrap (T.to_json
-                                                                  map)));
+      Format.fprintf fmt "%s" (Ezjsonm.to_string (Ezjsonm.wrap (T.to_json map)));
       Lwt.return_unit
 
     let disconnect t = Lwt.return_unit (* TODO: kill tick somehow *)
 
     let arp_timeout = 60. (* age entries out of cache after this many seconds *)
+    let expiry_check_interval = 1. (* check for expired entries this often *)
     let probe_repeat_delay = 1.5 (* per rfc5227, 2s >= probe_repeat_delay >= 1s *)
     let probe_num = 3 (* how many probes to send before giving up *)
 
-    let task str = 
-      Irmin.Task.create ~date:(Int64.of_float (Clock.time ())) ~owner:"seal" str
+    let task owner =
+      Irmin.Task.create ~date:(Int64.of_float (Clock.time ())) ~owner
 
-    let string_of_arp arp = 
+    let string_of_arp arp =
       let string_of_op = function
         | `Request -> "Request"
         | `Reply -> "Reply"
         | `Unknown n -> Printf.sprintf "Unknown op: %d" n
       in
-      Printf.sprintf "Op %s: %s, %s -> %s %s\n%!" 
+      Printf.sprintf "Op %s: %s, %s -> %s %s\n%!"
         (string_of_op arp.op)
         (Macaddr.to_string arp.sha) (Ipaddr.V4.to_string arp.spa)
         (Macaddr.to_string arp.tha) (Ipaddr.V4.to_string arp.tpa)
 
     let rec tick t () =
       Irmin.head_exn (t.cache "starting expiry") >>= fun head ->
-      Irmin.of_head t.store t.config task head >>= fun our_br ->
+      Irmin.of_head t.store t.config (task t.owner) head >>= fun our_br ->
       Irmin.read_exn (our_br "read for timeouts") t.node >>= fun table ->
       let now = Clock.time () in
       let updated = T.expire table now in
@@ -175,14 +175,14 @@ module Arp = struct
     let output t arp =
       Ethif.write t.ethif (Parse.cstruct_of_arp arp)
 
-    let set_ips t ips = 
+    let set_ips t ips =
       (* it would be nice if there were some provision for "uh you really don't
          want to do that, that IP is in the cache already" *)
       Lwt.join (List.map (fun ip -> output t (garp t ip)) ips) >>= fun () ->
       t.bound_ips <- ips;
       Lwt.return_unit
 
-    let add_ip t ip = 
+    let add_ip t ip =
       match List.mem ip (t.bound_ips) with
       | true -> Lwt.return_unit
       | false -> set_ips t (ip :: t.bound_ips)
@@ -190,19 +190,19 @@ module Arp = struct
     let remove_ip t ip =
       match List.mem ip (t.bound_ips) with
       | false -> Lwt.return_unit
-      | true -> 
+      | true ->
         let is_not_ip other_ip = ((Ipaddr.V4.compare ip other_ip) <> 0) in
         set_ips t (List.filter is_not_ip t.bound_ips)
 
     let get_ips t = t.bound_ips
 
     let notify t ip mac =
-      let merge str new_table our_br head = 
+      let merge str new_table our_br head =
         Irmin.update (our_br ("Arp.notify: " ^ str)) t.node new_table >>= fun () ->
         Irmin.merge_exn "Arp.notify: merge notify branch" our_br ~into:t.cache
       in
       Irmin.head_exn (t.cache "starting update") >>= fun head ->
-      Irmin.of_head t.store t.config task head >>= fun our_br ->
+      Irmin.of_head t.store t.config (task t.owner) head >>= fun our_br ->
       Irmin.read_exn (our_br "lookup") t.node >>= fun table ->
       let now = Clock.time () in
       let expire = now +. arp_timeout in
@@ -225,7 +225,7 @@ module Arp = struct
         | hd :: _ -> hd
         | [] -> Ipaddr.V4.any
       in
-      { op=`Request; tha = Macaddr.broadcast; sha = (Ethif.mac t.ethif); 
+      { op=`Request; tha = Macaddr.broadcast; sha = (Ethif.mac t.ethif);
         tpa = ip; spa = source_ip; }
 
     let output_probe t ip = output t (probe t ip)
@@ -240,12 +240,12 @@ module Arp = struct
         | `Request ->
           (* Received ARP request, check if we can satisfy it from
              our own IPv4 list *)
-          if List.mem arp.tpa t.bound_ips then 
-            output t 
-              { op=`Reply; 
-                sha = Ethif.mac t.ethif; tha = arp.sha; 
+          if List.mem arp.tpa t.bound_ips then
+            output t
+              { op=`Reply;
+                sha = Ethif.mac t.ethif; tha = arp.sha;
                 (* just switch src and dst ips for reply *)
-                spa = arp.tpa; tpa = arp.spa 
+                spa = arp.tpa; tpa = arp.spa
               }
           else Lwt.return_unit
         | `Reply ->
@@ -273,7 +273,8 @@ module Arp = struct
           (* First request, so send a query packet *)
           output_probe t ip >>= fun () ->
           Lwt.choose [ (response >>= fun _ -> Lwt.return `Ok);
-                       (Time.sleep probe_repeat_delay >>= fun () -> Lwt.return `Timeout) ] >>= function
+                       (Time.sleep probe_repeat_delay >>= fun () -> Lwt.return `Timeout)
+                     ] >>= function
           | `Ok -> Lwt.return_unit
           | `Timeout ->
             (* TODO: track the retry number in Irmin as well *)
@@ -281,8 +282,6 @@ module Arp = struct
               let n = n+1 in
               retry n ()
             end else begin
-              let str = Printf.sprintf "Arp.query: query thread timed out for ip %s"
-                  (Ipaddr.V4.to_string ip) in
               Lwt.wakeup waker `Timeout;
               Lwt.return_unit
             end
