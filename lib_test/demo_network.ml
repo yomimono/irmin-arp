@@ -20,13 +20,14 @@ let root = "demo_results"
 
 let strip = Ipaddr.V4.to_string
 
-let get_arp ?(backend = blessed_backend) ~root ~node () =
+let get_arp ?(backend = blessed_backend) ~root ~node ?(pull=[]) () =
   or_error "backend" V.connect backend >>= fun netif ->
   or_error "ethif" E.connect netif >>= fun ethif ->
   let config = Irmin_storer_fs.config ~root () in
   clear_cache config node >>= fun () ->
-  or_error "arp" (A_fs.connect ethif config) [node] >>= fun arp ->
-  Lwt.return (netif, ethif, arp)
+  A_fs.connect ethif config ~node:[node] ~pull >>= function
+  | `Ok arp -> Lwt.return (netif, ethif, arp)
+  | `Error _ -> Lwt.fail (failwith "Arp.connect failed!")
 
 let arp_only_listener netif ethif arp () =
   let noop = fun _ -> Lwt.return_unit in
