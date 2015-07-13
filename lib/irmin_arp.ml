@@ -155,15 +155,47 @@ module Arp = struct
        routers and end hosts; we have no way of knowing which we are without
        taking a setup parameter. *)
     let connect ethif config ~pull ~node =
+      let seed_cache cache x =
+        let process = function
+          | `Ok `Ok -> Lwt.return `Ok
+          | `Ok `Error -> Lwt.return (`Error `Fs)
+          | `Ok `No_head -> Lwt.return (`Error `Semantics)
+          | `Conflict s -> failwith s (* conflicts should be precluded by
+                                         semantics of the merge function *)
+        in
+        Irmin.pull (cache "Arp.create: Merge seed repository") x `Merge >>= process
+      in
+      let empty_cache cache =
+        Irmin.update (cache "Arp.create: Initial empty cache") node T.empty
+        >>= fun () -> Lwt.return `Ok
+      in
+      let check_node node cache =
+        Irmin.read (cache "Arp.create: read for node entry") node >>= function
+        | Some x -> Lwt.return `Ok
+        | None -> Lwt.return (`Error `Semantics)
+      in
+      let aux cache = function
+        | [] -> empty_cache cache
+        | l  ->
+          let rec init cache = function
+            | [] -> check_node node cache (* disallow empty node *)
+            | x::xs -> seed_cache cache x >>= function
+              | `Ok -> init cache xs
+              | `Error s -> Lwt.return (`Error s)
+          in
+          init cache l
+      in
       let store = Irmin.basic (module Maker) (module T) in
       let node = T.Path.create node in
-      Irmin.create store config task >>= fun cache ->
-      Irmin.update (cache "Arp.create: Initial empty cache") node T.empty 
-      >>= fun () ->
-      let t = { ethif; bound_ips = []; node; config; store; cache; pull; 
-                pending = Hashtbl.create 4 } in
-      Lwt.async (tick t);
-      Lwt.return (`Ok t)
+      let owner = String.concat "/" node in
+      Irmin.create store config (task owner) >>= fun cache ->
+      aux cache pull >>= function
+      | `Error s -> Lwt.return (`Error s)
+      | `Ok ->
+        let t = { ethif; bound_ips = []; node; owner; config; store; cache;
+                  pending = Hashtbl.create 4 } in
+        Lwt.async (tick t);
+        Lwt.return (`Ok t)
 
     let push t remote =
       Irmin.push (t.cache "pushing state to remote store") remote
