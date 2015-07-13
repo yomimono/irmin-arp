@@ -163,7 +163,12 @@ module Arp = struct
           | `Conflict s -> failwith s (* conflicts should be precluded by
                                          semantics of the merge function *)
         in
-        Irmin.pull (cache "Arp.create: Merge seed repository") x `Merge >>= process
+        try
+          let x = Irmin.remote_basic x in
+          Irmin.pull (cache "Arp.create: Merge seed repository") x `Merge >>= process
+        with
+          (* TODO: a better serialization method in table.ml will require a change here *)
+        | Ezjsonm.Parse_error _ -> Lwt.return (`Error `Semantics)
       in
       let empty_cache cache =
         Irmin.update (cache "Arp.create: Initial empty cache") node T.empty

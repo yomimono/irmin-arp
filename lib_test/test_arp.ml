@@ -13,6 +13,8 @@ module Test (I : Irmin.S_MAKER) = struct
     arp: A.t;
   }
 
+  let gripe str = OUnit.assert_failure str
+
   let store = Irmin.basic (module I) (module T)
 
   let get_arp ?(backend = blessed_backend) ~(make_fn : unit -> Irmin.config) ~node
@@ -22,13 +24,19 @@ module Test (I : Irmin.S_MAKER) = struct
     let config = make_fn () in
     let node = [node] in
     A.connect ethif config ~node ~pull >>= function
-    | `Ok arp -> Lwt.return {config; node; backend; netif; ethif; arp;}
+    | `Ok arp -> Lwt.return (`Ok {config; node; backend; netif; ethif; arp;})
+    | `Error e -> Lwt.return (`Error e)
+
+  let get_arp_exn ?(backend = blessed_backend) ~(make_fn : unit -> Irmin.config) ~node
+      ?(pull=[])() =
+    get_arp ~backend ~make_fn ~node ~pull () >>= function
+    | `Ok stack -> Lwt.return stack
     | `Error e -> OUnit.assert_failure "Couldn't start ARP :("
 
   let local_copy stack =
     Irmin.create store stack.config Irmin_unix.task >>= fun cache ->
     A.push stack.arp (Irmin.remote_basic (cache "make remote")) >>= function
-    | `Error -> OUnit.assert_failure "ARP didn't push cache to us"
+    | `Error -> gripe "ARP didn't push cache to us"
     | `Ok -> Lwt.return cache
 
   let confirm map (ip, mac) =
@@ -69,12 +77,12 @@ module Test (I : Irmin.S_MAKER) = struct
     (* Arp.create returns something bearing resemblance to an Arp.t *)
     (* possibly assert some qualities of a freshly-created ARP interface -- e.g.
        no bound IPs, empty cache, etc *)
-    get_arp ~make_fn ~node:"__root__" () >>= fun stack ->
+    get_arp_exn ~make_fn ~node:"__root__" () >>= fun stack ->
     OUnit.assert_equal [] (A.get_ips stack.arp);
     local_copy stack >>= fun cache ->
     Irmin.read (cache "create_is_consistent checking for empty map") stack.node >>=
     function
-    | None -> OUnit.assert_failure "Expected location of the cache was empty"
+    | None -> gripe "Expected location of the cache was empty"
     | Some map -> OUnit.assert_equal T.empty map; Lwt.return_unit
 
   let timeout_or ~timeout ~msg listen_netif do_fn listen_fn =
@@ -92,7 +100,7 @@ module Test (I : Irmin.S_MAKER) = struct
     ]
 
   let set_ips (make_fn : unit -> Irmin.config) () =
-    get_arp ~make_fn ~node:"set_ips" () >>= fun stack ->
+    get_arp_exn ~make_fn ~node:"set_ips" () >>= fun stack ->
     (* set up a listener on the same backend that will return when it hears a GARP *)
     or_error "backend" V.connect stack.backend >>= fun listen_netif ->
     (* TODO: according to the contract in arpv4.mli, add_ip and set_ip
@@ -108,11 +116,11 @@ module Test (I : Irmin.S_MAKER) = struct
          | true -> V.disconnect listen_netif
          | false ->
            match Irmin_arp.Arp.Parse.arp_of_cstruct buf with
-           | `Ok arp -> OUnit.assert_failure "something ARP but non-GARP sent after set_ips"
-           | `Unusable -> OUnit.assert_failure "set_ips seems to have sent
+           | `Ok arp -> gripe "something ARP but non-GARP sent after set_ips"
+           | `Unusable -> gripe "set_ips seems to have sent
          us something that expects a protocol other than ipv4"
-           | `Bad_mac _ -> OUnit.assert_failure "couldn't parse a MAC out of something set_ips sent"
-           | `Too_short -> OUnit.assert_failure "got a short packet after set_ips"
+           | `Bad_mac _ -> gripe "couldn't parse a MAC out of something set_ips sent"
+           | `Too_short -> gripe "got a short packet after set_ips"
       )
     in
     timeout_or ~timeout:0.1 ~msg:"100ms timeout exceeded before listen_fn returned"
@@ -125,7 +133,7 @@ module Test (I : Irmin.S_MAKER) = struct
     Lwt.return_unit
 
   let get_remove_ips make_fn () =
-    get_arp ~make_fn ~node:"__root__" () >>= fun stack ->
+    get_arp_exn ~make_fn ~node:"__root__" () >>= fun stack ->
     OUnit.assert_equal [] (A.get_ips stack.arp);
     A.set_ips stack.arp [ first_ip; first_ip ] >>= fun () ->
     let ips = A.get_ips stack.arp in
@@ -140,8 +148,8 @@ module Test (I : Irmin.S_MAKER) = struct
 
   let input_single_garp make_fn () =
     let backend = blessed_backend in
-    get_arp ~backend ~make_fn ~node:"listener" () >>= fun listen ->
-    get_arp ~backend ~make_fn ~node:"speaker" () >>= fun speak ->
+    get_arp_exn ~backend ~make_fn ~node:"listener" () >>= fun listen ->
+    get_arp_exn ~backend ~make_fn ~node:"speaker" () >>= fun speak ->
     (* send a GARP from one side (speak.arp) and make sure it was heard on the
        other *)
     timeout_or ~timeout:0.5 ~msg:"Nothing received by listen.netif when trying to
@@ -159,8 +167,8 @@ module Test (I : Irmin.S_MAKER) = struct
   let input_single_unicast make_fn () =
     (* use on-disk git fs for cache so we can read it back and check it ourselves *)
     let backend = blessed_backend in
-    get_arp ~backend ~make_fn ~node:"listener" () >>= fun listen ->
-    get_arp ~backend ~make_fn ~node:"speaker" () >>= fun speak ->
+    get_arp_exn ~backend ~make_fn ~node:"listener" () >>= fun listen ->
+    get_arp_exn ~backend ~make_fn ~node:"speaker" () >>= fun speak ->
     (* send an ARP reply from one side (speak.arp) and make sure it was heard on the
        other *)
     (* in order to package this properly, we need mac details for each netif *)
@@ -189,18 +197,18 @@ module Test (I : Irmin.S_MAKER) = struct
       | Confirmed (time, entry) -> OUnit.assert_equal entry (V.mac speak.netif);
         Lwt.return_unit
     with
-      Not_found -> OUnit.assert_failure "Expected cache entry not found in
-    listener cache map, as read back from Irmin"
+      Not_found -> gripe "Expected cache entry not found in
+                          listener cache map, as read back from Irmin"
 
   let input_multiple_garp make_fn () =
     let strip = Ipaddr.V4.of_string_exn in
     let backend = blessed_backend in
-    get_arp ~backend ~make_fn ~node:"listener" () >>= fun listen ->
-    get_arp ~backend ~make_fn ~node:"speaker1" () >>= fun speaker1 ->
-    get_arp ~backend ~make_fn ~node:"speaker2" () >>= fun speaker2 ->
-    get_arp ~backend ~make_fn ~node:"speaker3" () >>= fun speaker3 ->
-    get_arp ~backend ~make_fn ~node:"speaker4" () >>= fun speaker4 ->
-    get_arp ~backend ~make_fn ~node:"speaker5" () >>= fun speaker5 ->
+    get_arp_exn ~backend ~make_fn ~node:"listener" () >>= fun listen ->
+    get_arp_exn ~backend ~make_fn ~node:"speaker1" () >>= fun speaker1 ->
+    get_arp_exn ~backend ~make_fn ~node:"speaker2" () >>= fun speaker2 ->
+    get_arp_exn ~backend ~make_fn ~node:"speaker3" () >>= fun speaker3 ->
+    get_arp_exn ~backend ~make_fn ~node:"speaker4" () >>= fun speaker4 ->
+    get_arp_exn ~backend ~make_fn ~node:"speaker5" () >>= fun speaker5 ->
     let multiple_ips () =
       OS.Time.sleep 0.2 >>= fun () ->
       Lwt.join [
@@ -234,8 +242,8 @@ module Test (I : Irmin.S_MAKER) = struct
 
   let input_changed_ip make_fn () =
     let backend = blessed_backend in
-    get_arp ~backend ~make_fn ~node:"speaker" () >>= fun speak ->
-    get_arp ~backend ~make_fn ~node:"listener" () >>= fun listen ->
+    get_arp_exn ~backend ~make_fn ~node:"speaker" () >>= fun speak ->
+    get_arp_exn ~backend ~make_fn ~node:"listener" () >>= fun listen ->
     let multiple_ips () =
       A.set_ips speak.arp [ Ipaddr.V4.of_string_exn "10.23.10.1" ] >>= fun () ->
       A.set_ips speak.arp [ Ipaddr.V4.of_string_exn "10.50.20.22" ] >>= fun () ->
@@ -261,14 +269,14 @@ module Test (I : Irmin.S_MAKER) = struct
       | Confirmed (time, entry) -> OUnit.assert_equal entry (V.mac speak.netif);
         Lwt.return_unit
     with
-      Not_found -> OUnit.assert_failure "Expected cache entry not found in
+      Not_found -> gripe "Expected cache entry not found in
     listener cache map, as read back from Irmin"
 
   let input_garbage make_fn () =
     let open A in
     let backend = blessed_backend in
-    get_arp ~backend ~make_fn ~node:"speaker" () >>= fun speak ->
-    get_arp ~backend ~make_fn ~node:"listener" () >>= fun listen ->
+    get_arp_exn ~backend ~make_fn ~node:"speaker" () >>= fun speak ->
+    get_arp_exn ~backend ~make_fn ~node:"listener" () >>= fun listen ->
     A.set_ips listen.arp [ first_ip ] >>= fun () ->
     let listen_fn () = V.listen listen.netif (E.input ~arpv4:(A.input listen.arp)
                                                 ~ipv4:(fun buf -> Lwt.return_unit) ~ipv6:(fun buf -> Lwt.return_unit)
@@ -324,11 +332,11 @@ module Test (I : Irmin.S_MAKER) = struct
     let all_zero = (Cstruct.create (Arpv4_wire.sizeof_arp)) in
     Cstruct.memset all_zero 0;
     match Irmin_arp.Arp.Parse.arp_of_cstruct all_zero with
-    | `Too_short -> OUnit.assert_failure
+    | `Too_short -> gripe
                       "Arp.parse claimed that an appropriate-length zero'd buffer was too short"
     | `Bad_mac l -> let mac_strs = Printf.sprintf "%S" (String.concat ", " l) in
-      OUnit.assert_failure ("Arp.parse claimed these were bad MACs: " ^ mac_strs)
-    | `Ok all_zero -> OUnit.assert_failure "Arp.parse allowed a 0 protocol"
+       gripe ("Arp.parse claimed these were bad MACs: " ^ mac_strs)
+    | `Ok all_zero -> gripe "Arp.parse allowed a 0 protocol"
     | `Unusable -> (* correct! *) Lwt.return_unit
 
   let parse_unparse () =
@@ -352,9 +360,9 @@ module Test (I : Irmin.S_MAKER) = struct
     let entry = Entry.Confirmed ((Clock.time () +.  60.), sample_mac) in
     let seeded = make_seeded_cache ["speaker"] (second_ip, entry) in
     seeded >>= fun seeded_cache ->
-    let poll_remote = Irmin.remote_basic (seeded_cache "make remote") in
-    get_arp ~backend ~make_fn ~node:"listener" ~pull:[] () >>= fun listen ->
-    get_arp ~backend ~make_fn ~node:"speaker" ~pull:[poll_remote] () >>= fun speak ->
+    let poll_remote = seeded_cache "make remote" in
+    get_arp_exn ~backend ~make_fn ~node:"listener" ~pull:[] () >>= fun listen ->
+    get_arp_exn ~backend ~make_fn ~node:"speaker" ~pull:[poll_remote]() >>= fun speak ->
     A.set_ips speak.arp [ first_ip ] >>= fun () ->
       (* OK, since we seeded the cache, calling query for that key
          should not emit an ARP query and should return straight away *)
@@ -363,10 +371,9 @@ module Test (I : Irmin.S_MAKER) = struct
         (fun () -> A.query speak.arp second_ip >>= function
            | `Ok mac when mac = sample_mac -> (* yay! *)
              V.disconnect listen.netif
-           | `Ok mac -> OUnit.assert_failure (Printf.sprintf "pre-seeded query got a
-    MAC, but it's the wrong one: %s" (Macaddr.to_string mac))
-           | `Timeout -> OUnit.assert_failure "Query timed out for something that was
-    seeded in the cache"
+           | `Ok mac -> gripe ("pre-seeded query got a MAC, but it's the wrong one: "
+                        ^ (Macaddr.to_string mac))
+           | `Timeout -> gripe "Query timed out for something that was seeded in the cache"
         )
         (fun () -> (fun buf -> OUnit.assert_failure "Listener heard a
     packet, but speaker should've had a cache entry")
@@ -374,11 +381,11 @@ module Test (I : Irmin.S_MAKER) = struct
 
   let query_sent_with_empty_cache make_fn () =
     let backend = blessed_backend in
-    get_arp ~backend ~make_fn ~node:"speaker" () >>= fun speak ->
-    get_arp ~backend ~make_fn ~node:"listener" () >>= fun listen ->
+    get_arp_exn ~backend ~make_fn ~node:"speaker" () >>= fun speak ->
+    get_arp_exn ~backend ~make_fn ~node:"listener" () >>= fun listen ->
     let do_fn () =
       A.query speak.arp first_ip >>= function
-      | `Ok mac -> OUnit.assert_failure "query returned a MAC when the cache
+      | `Ok mac -> gripe "query returned a MAC when the cache
     should've been empty and nobody could possibly be responding"
       | `Timeout -> Lwt.return_unit (* we shouldn't get this far, but if
                                        timeout_or has a large value we might and
@@ -405,8 +412,8 @@ module Test (I : Irmin.S_MAKER) = struct
     let expiry = Clock.time () +. 1. in
     let seeded_map = T.add first_ip (Entry.Confirmed (expiry, sample_mac)) T.empty in
     seed_cache make_fn ["listener"] seeded_map >>= fun sour_milk ->
-    let sour_cream = Irmin.remote_basic (sour_milk "make remote") in
-    get_arp ~backend ~make_fn ~node:"listener" ~pull:[sour_cream] () >>= fun listen ->
+    let sour_cream = (sour_milk "make remote") in
+    get_arp_exn ~backend ~make_fn ~node:"listener" ~pull:[sour_cream] () >>= fun listen ->
     (* now you see it *)
     local_copy listen >>= fun store ->
     Irmin.read_exn (store "readback of map") listen.node >>= fun map ->
@@ -418,6 +425,19 @@ module Test (I : Irmin.S_MAKER) = struct
     Irmin.read_exn (store "readback of map") listen.node >>= fun map ->
     OUnit.assert_raises Not_found (fun () -> T.find first_ip map);
     Lwt.return_unit
+
+  let pull_nonsense_data make_fn () =
+    let novel_store =
+      Irmin.basic (module Irmin_mem.Make) (module Irmin.Contents.String) in
+    let novel_config = Irmin_mem.config () in
+    Irmin.create novel_store novel_config Irmin_unix.task >>= fun novel ->
+    Irmin.update (novel "initial title: The Watchful Listener") ["listener"]
+      "Hiding from English summer weather" >>= fun () ->
+    let remote_novel = (novel "Let's immortalize this!") in
+    get_arp ~make_fn ~node:"listener" ~pull:[remote_novel] () >>= function
+    | `Ok stack -> gripe "get_arp claimed success when impossible"
+    | `Error `Semantics -> Lwt.return_unit
+    | `Error e -> gripe "get_arp: failure reported, but wrong type"
 
 end
 
@@ -446,14 +466,14 @@ let () =
     let module Test = Test(Maker) in
     tests make_fn `Quick
       [ "set_ips", Test.set_ips;
-        "get_remove_ips", Test.get_remove_ips ]
-  in
+        "get_remove_ips", Test.get_remove_ips
+      ] in
   let parse (module Maker : Irmin.S_MAKER) =
     let module Test = Test(Maker) in
     [
-    "parse_zeros", `Quick, Test.parse_zeros |> lwt_run;
-    "parse_unparse", `Quick, Test.parse_unparse |> lwt_run;
-  ] in
+      "parse_zeros", `Quick, Test.parse_zeros |> lwt_run;
+      "parse_unparse", `Quick, Test.parse_unparse |> lwt_run;
+    ] in
   let query (module Maker : Irmin.S_MAKER) make_fn =
     let module Test = Test(Maker) in
     tests make_fn `Slow
@@ -474,8 +494,12 @@ let () =
     let module Test = Test(Maker) in
     tests make_fn `Quick [
       "create_is_consistent", Test.create_is_consistent ;
-    ]
-  in
+    ] in
+  let pulls (module Maker : Irmin.S_MAKER) make_fn =
+    let module Test = Test(Maker) in
+    tests make_fn `Quick [
+      "pull_nonsense_data", Test.pull_nonsense_data ;
+    ] in
   let aging (module Maker : Irmin.S_MAKER) make_fn =
     let module Test = Test(Maker) in
     tests make_fn `Slow [
@@ -486,14 +510,16 @@ let () =
   let tests = [
     "parse", parse (module Irmin_mem.Make);
     "create_mem", create (module Irmin_mem.Make) mem_store;
-    "input_mem", input (module Irmin_mem.Make) mem_store;
-    "ip_CRUD_mem", ip_crud (module Irmin_mem.Make) mem_store;
-    "query_mem", query (module Irmin_mem.Make) mem_store;
-    "aging_mem", aging (module Irmin_mem.Make) mem_store;
     "create_disk", create (module Irmin_backend_fs) git_store;
+    "pulls_mem", pulls (module Irmin_mem.Make) mem_store;
+    "pulls_disk", pulls (module Irmin_backend_fs) git_store;
+    "input_mem", input (module Irmin_mem.Make) mem_store;
     "input_disk", input (module Irmin_backend_fs) git_store;
+    "ip_CRUD_mem", ip_crud (module Irmin_mem.Make) mem_store;
     "ip_CRUD_disk", ip_crud (module Irmin_backend_fs) git_store;
+    "query_mem", query (module Irmin_mem.Make) mem_store;
     "query_disk", query (module Irmin_backend_fs) git_store;
+    "aging_mem", aging (module Irmin_mem.Make) mem_store;
     "aging_disk", aging (module Irmin_backend_fs) git_store;
   ] in
   Alcotest.run "Irmin_arp.Arp" tests

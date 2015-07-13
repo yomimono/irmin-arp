@@ -28,7 +28,7 @@ module Arp : sig
     val connect : 
       Ethif.t ->
       Irmin.config ->
-      pull:Irmin.remote list ->
+      pull:([ `BC ], 'k, 'v) Irmin.t list ->
       node:string list ->
       [> `Ok of t | `Error of error ] io
   end
