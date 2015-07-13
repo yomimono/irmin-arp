@@ -149,7 +149,7 @@ module Arp = struct
       Irmin.update (our_br "Arp.tick: updating to age out old entries") t.node updated >>= fun () ->
       Irmin.merge_exn "Arp.tick: merge expiry branch" our_br ~into:t.cache >>=
       fun () ->
-      Time.sleep arp_timeout >>= fun () -> tick t ()
+      Time.sleep expiry_check_interval >>= fun () -> tick t ()
 
     (* TODO: treatment of multicast ethernet address messages differs between
        routers and end hosts; we have no way of knowing which we are without
