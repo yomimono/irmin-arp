@@ -60,10 +60,7 @@ module Make(P: Irmin.Path.S) = struct
   let empty = M.empty
   let expire t now =
     M.filter (fun _ip entry -> match entry with
-        | Entry.Confirmed (time, _) ->
-          Printf.printf "time %f > current time %f: %s\n%!" time now
-            (string_of_bool (time > now));
-          time > now) t
+        | Entry.Confirmed (time, _) -> time > now) t
 
   let merge _path ~(old : Entry.t M.t Irmin.Merge.promise) t1 t2 = 
     let open Irmin.Merge.OP in
