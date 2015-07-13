@@ -2,7 +2,7 @@ open Lwt
 open Common
 
 module Test (I : Irmin.S_MAKER) = struct
-  module A = Irmin_arp.Arp.Make(E)(Clock)(OS.Time)(I)
+  module A = Irmin_arp.Arp.Make(E)(Clock)(OS.Time)(Random)(I)
 
   type stack = {
     config: Irmin.config;
