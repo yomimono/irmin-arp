@@ -2,7 +2,9 @@ open Common
 open Lwt.Infix
 
 module A_fs = Irmin_arp.Arp.Make(E)(Clock)(OS.Time)(Random)(Irmin_backend_fs)
-module IPV4 = Ipv4.Make(E)(A_fs)
+module A_mem = Irmin_arp.Arp.Make(E)(Clock)(OS.Time)(Random)(Irmin_mem.Make)
+module A = A_mem
+module IPV4 = Ipv4.Make(E)(A)
 module TCP = Tcp.Flow.Make(IPV4)(OS.Time)(Clock)(Random)
 
 let netmask = Ipaddr.V4.of_string_exn "255.255.255.0"
@@ -12,34 +14,32 @@ let server_2_ip = Ipaddr.V4.of_string_exn "192.168.252.2"
 
 let echo_port = 443
 
+let pester_interval = 5.0
+let crosstalk_interval = 90.0
+
 let root = "demo_results"
 
 (* clients are 3..60, inclusive *)
-(* clients whose ips end in 0 make requests to 192.168.252.1 *)
-(* clients whose ips end in 5 make requests to 192.168.252.2 *)
 
 let strip = Ipaddr.V4.to_string
+
+let ignore_errors fn = function
+  | `Ok q -> fn q
+  | `Error _ -> Log.warn "DEMO: error reading or writing from flow"; Lwt.return_unit
+  | `Eof -> Log.warn "DEMO: EOF reading or writing from flow"; Lwt.return_unit
 
 let get_arp ?(backend = blessed_backend) ~root ~node ?(pull=[]) () =
   or_error "backend" V.connect backend >>= fun netif ->
   or_error "ethif" E.connect netif >>= fun ethif ->
   let config = Irmin_storer_fs.config ~root () in
-  clear_cache config node >>= fun () ->
-  A_fs.connect ethif config ~node:[node] ~pull >>= function
+  A.connect ethif config ~node:[node] ~pull >>= function
   | `Ok arp -> Lwt.return (netif, ethif, arp)
   | `Error _ -> Lwt.fail (failwith "Arp.connect failed!")
-
-let arp_only_listener netif ethif arp () =
-  let noop = fun _ -> Lwt.return_unit in
-  V.listen netif (E.input
-                    ~ipv6:noop ~ipv4:noop
-                    ~arpv4:(fun buf -> A_fs.input arp buf)
-                    ethif)
 
 let arp_and_tcp_listeners netif ethif arp ip tcp () =
         V.listen netif (E.input
                           ~ipv6:(fun buf -> Lwt.return_unit)
-                          ~arpv4:(fun buf -> A_fs.input arp buf)
+                          ~arpv4:(fun buf -> A.input arp buf)
                           ~ipv4:(
                             IPV4.input
                               ~tcp:(TCP.input tcp ~listeners:(fun _ -> None))
@@ -65,13 +65,11 @@ let spawn_listeners (netif, ethif, arp, ip, tcp) =
 
 let start_tcp_listener ~port ~fn (netif, ethif, arp, ip) =
   let chooser = function | n when n = port -> Some fn | _ -> None in
-  let name = Printf.sprintf "tcp listener %s" (strip (List.hd (IPV4.get_ip ip))) in
   or_error "tcp" TCP.connect ip >>= fun tcp ->
   let listener = (
-        MProf.Trace.label name;
         V.listen netif (E.input
                     ~ipv6:(fun buf -> Lwt.return_unit)
-                    ~arpv4:(fun buf -> A_fs.input arp buf)
+                    ~arpv4:(fun buf -> A.input arp buf)
                     ~ipv4:(
                       IPV4.input
                         ~tcp:(TCP.input tcp ~listeners:chooser)
@@ -83,35 +81,11 @@ let start_tcp_listener ~port ~fn (netif, ethif, arp, ip) =
   ) in
   Lwt.return (netif, ethif, arp, ip, tcp, listener)
 
-let clients ~backend =
-  let rec intlist s e acc =
-    if s = e then List.rev (s::acc) else intlist (s+1) e (s::acc) in
-  let base = Ipaddr.V4.to_int32 (Ipaddr.V4.of_string_exn "192.168.252.0") in
-  let our_ip base offset =
-      Ipaddr.V4.of_int32 Int32.(add base (of_int offset))
-  in
-  let ips = List.map (fun number -> our_ip base number) (intlist 3 60 []) in
-  let name_repo ip = Printf.sprintf "client_%s" (Ipaddr.V4.to_string ip) in
-  let start_tcp (n, e, a, ip) =
-    or_error "tcp" TCP.connect ip >>= fun tcp -> Lwt.return (n, e, a, ip, tcp)
-  in
-  let arps = Lwt_list.map_p
-      (fun ip ->
-         get_arp ~backend ~root ~node:(name_repo ip) () >>=
-         start_ip ip >>= start_tcp >>= spawn_listeners
-      ) ips
-  in
-  arps
-
 let servers ~backend =
   let echo flow =
-    let ignore_errors fn = function
-      | `Ok q -> fn q
-      | `Error _ | `Eof -> Lwt.return_unit
-    in
     (* try echoing, but don't really mind if we fail *)
     TCP.read flow >>= ignore_errors (fun buf ->
-        TCP.write flow buf >>= fun _ -> Lwt.return_unit
+        TCP.write flow buf >>= ignore_errors (fun () -> Lwt.return_unit)
       )
   in
   let start_server ~root ~node ~ip =
@@ -123,28 +97,26 @@ let servers ~backend =
   start_server ~root ~node:"server_2" ~ip:server_2_ip >>= fun s2 ->
   Lwt.return (s1, s2)
 
-let clients ~backend =
+let clients ~backend lownum highnum =
   let rec intlist s e acc =
     if s = e then List.rev (s::acc) else intlist (s+1) e (s::acc) in
   let base = Ipaddr.V4.to_int32 (Ipaddr.V4.of_string_exn "192.168.252.0") in
   let our_ip base offset =
       Ipaddr.V4.of_int32 Int32.(add base (of_int offset))
   in
-  let ips = List.map (fun number -> our_ip base number) (intlist 3 60 []) in
+  let ips = List.map (fun number -> our_ip base number) (intlist lownum highnum []) in
   let name_repo ip = Printf.sprintf "client_%s" (Ipaddr.V4.to_string ip) in
   let start_tcp (n, e, a, ip) =
     or_error "tcp" TCP.connect ip >>= fun tcp -> Lwt.return (n, e, a, ip, tcp)
   in
-  let arps = Lwt_list.map_p
+  Lwt_list.map_p
       (fun ip ->
          get_arp ~backend ~root ~node:(name_repo ip) () >>=
          start_ip ip >>= start_tcp >>= spawn_listeners
       ) ips
-  in
-  arps
 
 let servers ~backend =
-  let echo flow =
+  let rec echo flow =
     let ignore_errors fn = function
       | `Ok q -> fn q
       | `Error _ | `Eof -> Lwt.return_unit
@@ -152,7 +124,7 @@ let servers ~backend =
     (* try echoing, but don't really mind if we fail *)
     TCP.read flow >>= ignore_errors (fun buf ->
         TCP.write flow buf >>= fun _ -> Lwt.return_unit
-      )
+      ) >>= fun () -> echo flow
   in
   let start_server ~root ~node ~ip =
     get_arp ~backend ~root ~node ()
@@ -163,9 +135,10 @@ let servers ~backend =
   start_server ~root ~node:"server_2" ~ip:server_2_ip >>= fun s2 ->
   Lwt.return (s1, s2)
 
-let converse 
-    (client_backend, client_netif, client_ethif, client_ip, client_tcp) 
-    (_, _, _, server_ip, _, _) =
+let converse
+    (_, _, _, server_ip, _, _)
+    (_, _, client_arp, client_ip, client_tcp)
+    =
   (* every second, bother the other end and see whether they have anything to
      say back to us *)
   let dest = List.hd (IPV4.get_ip server_ip) in
@@ -176,16 +149,43 @@ let converse
   >>= function
   | `Error _ -> Lwt.fail (failwith "couldn't establish connection between client and server")
   | `Ok flow ->
+    (*
+    TCP.read flow >>= ignore_errors (fun buf ->
+        TCP.write flow buf >>= ignore_errors (fun () -> Lwt.return_unit)
+      ) *)
     let rec pester flow =
       let important_content = Cstruct.of_string "hi I love you I missed you" in
-      TCP.write flow important_content >>= fun _ ->
-      TCP.read flow >>= fun _ ->
-      OS.Time.sleep 5.0 >>= fun () -> pester flow
+      TCP.write flow important_content >>= ignore_errors
+        (
+          Log.warn "%s -> %s: %s" (strip src) (strip dest) (Cstruct.to_string
+                                                             important_content);
+          fun () -> TCP.read flow >>= ignore_errors (fun buf ->
+          Log.warn "%s -> %s: %s" (strip dest) (strip src) (Cstruct.to_string buf);
+          Lwt.return_unit )
+        ) >>= fun () ->
+      OS.Time.sleep pester_interval >>= fun () -> pester flow
     in
     let strip ip = IPV4.get_ip ip |> List.hd |> Ipaddr.V4.to_string in
     Log.warn "DEMO: connection established between %s and %s!" (strip client_ip)
       (strip server_ip);
     pester flow
+
+let crosstalk ((_, _, _, left_ip, _),
+    (_, _, _, right_ip, _)) : unit Lwt.t =
+  let rec gossip dst = 
+    let (frame, len) = IPV4.allocate_frame left_ip ~dst ~proto:`UDP in
+    (* this is a broken packet -- no udp header *)
+    let app_data = (Cstruct.shift frame len) in
+    let secrets = "CONFIDENTIAL GOSSIP" in
+    Cstruct.blit_from_string secrets 0 app_data 0 (String.length secrets);
+    IPV4.write left_ip frame app_data >>= fun () ->
+    Log.warn "%s -> %s: %s" (strip (List.hd (IPV4.get_ip left_ip))) (strip dst)
+      secrets;
+    OS.Time.sleep crosstalk_interval >>= fun () -> gossip dst
+  in
+  let dst = List.hd (IPV4.get_ip right_ip) in
+  gossip dst
+
 
 let ok_go () = (*
   let buffer = MProf_unix.mmap_buffer ~size:1000000 "demo_network_trace.ctf" in
@@ -197,13 +197,31 @@ let ok_go () = (*
   let backend = B.create ~yield:(fun () -> Lwt_main.yield ()) ~use_async_readers:true () in
   let get_listener (_, _, _, _, _, listener) = listener in
   servers ~backend >>= fun (s1, s2) ->
+  Log.warn "DEMO: servers started";
   (* last entry of servers is a listener for inclusion in Lwt.join *)
-  clients ~backend >>= fun client_list ->
+  (* some clients talk only to s1, some to only s2 *)
+  clients ~backend 40 49 >>= fun s1_clients ->
+  Log.warn "DEMO: clients contacting s1 online";
+  clients ~backend 50 59 >>= fun s2_clients ->
+  Log.warn "DEMO: clients contacting s2 online";
+  (* "left" and "right" clients periodically send one another IP messages *)
+  clients ~backend 10 19 >>= fun left_clients ->
+  Log.warn "DEMO: crosstalk left-hand clients online";
+  clients ~backend 20 29 >>= fun right_clients ->
+  Log.warn "DEMO: crosstalk right-hand clients online";
+  Log.warn "Starting demo in %s with %d nodes" root (2
+                                                     + (List.length s1_clients)
+                                                     + (List.length s2_clients)
+                                                     + (List.length left_clients)
+                                                     + (List.length right_clients));
+                                                       
   (* clients are now up and running ARP listeners *)
   Lwt.choose [
     get_listener s1;
     get_listener s2;
-    converse (List.hd client_list) s1
+    Lwt_list.iter_p (converse s1) s1_clients;
+    Lwt_list.iter_p (converse s2) s2_clients;
+    Lwt_list.iter_p crosstalk (List.combine left_clients right_clients);
   ] >>= fun _ -> Lwt.return_unit
 
 let () =
