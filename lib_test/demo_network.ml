@@ -81,22 +81,6 @@ let start_tcp_listener ~port ~fn (netif, ethif, arp, ip) =
   ) in
   Lwt.return (netif, ethif, arp, ip, tcp, listener)
 
-let servers ~backend =
-  let echo flow =
-    (* try echoing, but don't really mind if we fail *)
-    TCP.read flow >>= ignore_errors (fun buf ->
-        TCP.write flow buf >>= ignore_errors (fun () -> Lwt.return_unit)
-      )
-  in
-  let start_server ~root ~node ~ip =
-    get_arp ~backend ~root ~node ()
-    >>= start_ip ip
-    >>= start_tcp_listener ~port:echo_port ~fn:echo
-  in
-  start_server ~root ~node:"server_1" ~ip:server_1_ip >>= fun s1 ->
-  start_server ~root ~node:"server_2" ~ip:server_2_ip >>= fun s2 ->
-  Lwt.return (s1, s2)
-
 let clients ~backend lownum highnum =
   let rec intlist s e acc =
     if s = e then List.rev (s::acc) else intlist (s+1) e (s::acc) in
