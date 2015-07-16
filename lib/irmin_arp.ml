@@ -86,7 +86,8 @@ module Arp = struct
       (Random: V1.RANDOM) (Maker : Irmin.S_MAKER) = struct
     module T = Table.Make(Irmin.Path.String_list)
     module I = Irmin.Basic (Maker) (T)
-    type cache = (string -> ([ `BC ], T.Path.t, T.t) Irmin.t)
+    module Sync = Irmin.Sync(I)
+    type cache = (string -> I.t)
 
     type result = [ `Ok of Macaddr.t | `Timeout ]
     type ipaddr = Ipaddr.V4.t
@@ -102,7 +103,6 @@ module Arp = struct
       node: T.Path.t;
       owner: string;
       config: Irmin.config;
-      store: (T.Path.t, T.t) Irmin.basic;
       pending: (ipaddr, result Lwt.u) Hashtbl.t;
       (* use a hashtable, since everything else in here is mutable :( *)
       cache: cache
@@ -118,7 +118,7 @@ module Arp = struct
       time +. ((float_of_int ep) *. 0.001)
 
     let pp fmt t =
-      Irmin.read_exn (t.cache "read map for prettyprint") t.node >>= fun map ->
+      I.read_exn (t.cache "read map for prettyprint") t.node >>= fun map ->
       Format.fprintf fmt "%s" (Ezjsonm.to_string (Ezjsonm.wrap (T.to_json map)));
       Lwt.return_unit
 
@@ -144,15 +144,15 @@ module Arp = struct
         (Macaddr.to_string arp.tha) (Ipaddr.V4.to_string arp.tpa)
 
     let rec tick t () =
-      Irmin.head_exn (t.cache "starting expiry") >>= fun head ->
-      Irmin.of_head t.store t.config (task t.owner) head >>= fun our_br ->
-      Irmin.read_exn (our_br "read for timeouts") t.node >>= fun table ->
+      I.head_exn (t.cache "starting expiry") >>= fun head ->
+      I.of_head t.config (task t.owner) head >>= fun our_br ->
+      I.read_exn (our_br "read for timeouts") t.node >>= fun table ->
       let now = Clock.time () in
       let updated = T.expire table now in
       (* TODO: this could stand to either not be committed if no changes happen,
          or to have a more informative commit message, or both *)
-      Irmin.update (our_br "Arp.tick: updating to age out old entries") t.node updated >>= fun () ->
-      Irmin.merge_exn "Arp.tick: merge expiry branch" our_br ~into:t.cache >>=
+      I.update (our_br "Arp.tick: updating to age out old entries") t.node updated >>= fun () ->
+      I.merge_exn "Arp.tick: merge expiry branch" our_br ~into:t.cache >>=
       fun () ->
       Time.sleep (dither_wait expiry_check_interval) >>= fun () -> tick t ()
 
@@ -170,17 +170,17 @@ module Arp = struct
         in
         try
           let x = Irmin.remote_basic x in
-          Irmin.pull (cache "Arp.create: Merge seed repository") x `Merge >>= process
+          Sync.pull (cache "Arp.create: Merge seed repository") x `Merge >>= process
         with
           (* TODO: a better serialization method in table.ml will require a change here *)
         | Ezjsonm.Parse_error _ -> Lwt.return (`Error `Semantics)
       in
       let empty_cache cache =
-        Irmin.update (cache "Arp.create: Initial empty cache") node T.empty
+        I.update (cache "Arp.create: Initial empty cache") node T.empty
         >>= fun () -> Lwt.return `Ok
       in
       let check_node node cache =
-        Irmin.read (cache "Arp.create: read for node entry") node >>= function
+        I.read (cache "Arp.create: read for node entry") node >>= function
         | Some x -> Lwt.return `Ok
         | None -> Lwt.return (`Error `Semantics)
       in
@@ -195,21 +195,20 @@ module Arp = struct
           in
           init cache l
       in
-      let store = Irmin.basic (module Maker) (module T) in
       let node = T.Path.create node in
       let owner = String.concat "/" node in
-      Random.self_init ();
-      Irmin.create store config (task owner) >>= fun cache ->
+      I.create config (task owner) >>= fun cache ->
       aux cache pull >>= function
       | `Error s -> Lwt.return (`Error s)
       | `Ok ->
-        let t = { ethif; bound_ips = []; node; owner; config; store; cache;
+        Random.self_init ();
+        let t = { ethif; bound_ips = []; node; owner; config; cache;
                   pending = Hashtbl.create 4 } in
         Lwt.async (tick t);
         Lwt.return (`Ok t)
 
     let push t remote =
-      Irmin.push (t.cache "pushing state to remote store") remote
+      Sync.push (t.cache "push contents") remote
 
     (* construct an arp record representing a gratuitious arp announcement for
        ip *)
@@ -241,12 +240,12 @@ module Arp = struct
 
     let notify t ip mac =
       let merge str new_table our_br head =
-        Irmin.update (our_br ("Arp.notify: " ^ str)) t.node new_table >>= fun () ->
-        Irmin.merge_exn "Arp.notify: merge notify branch" our_br ~into:t.cache
+        I.update (our_br ("Arp.notify: " ^ str)) t.node new_table >>= fun () ->
+        I.merge_exn "Arp.notify: merge notify branch" our_br ~into:t.cache
       in
-      Irmin.head_exn (t.cache "starting update") >>= fun head ->
-      Irmin.of_head t.store t.config (task t.owner) head >>= fun our_br ->
-      Irmin.read_exn (our_br "lookup") t.node >>= fun table ->
+      I.head_exn (t.cache "starting update") >>= fun head ->
+      I.of_head t.config (task t.owner) head >>= fun our_br ->
+      I.read_exn (our_br "lookup") t.node >>= fun table ->
       let now = Clock.time () in
       let expire = now +. arp_timeout in
       let updated = T.add ip (Entry.Confirmed (expire, mac)) table in
@@ -303,7 +302,7 @@ module Arp = struct
     let query t ip =
       let (>>=) = Lwt.bind in
       let open Entry in
-      Irmin.read_exn (t.cache "Arp.query") t.node
+      I.read_exn (t.cache "Arp.query") t.node
       >>= fun table ->
       try
         match T.find ip table with
