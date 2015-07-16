@@ -24,12 +24,13 @@ module Arp : sig
        * this needs some work, but here's a first go at it *)
       | `Fs | `Network | `Semantics | `Unknown of string
     ]
-    val push : t -> Irmin.remote -> [ `Error | `Ok ] io
+    val push : t -> ([ `BC ], 'k, 'v) Irmin.t -> [ `Error | `Ok ] io
     val connect : 
       Ethif.t ->
       Irmin.config ->
       pull:([ `BC ], 'k, 'v) Irmin.t list ->
       node:string list ->
       [> `Ok of t | `Error of error ] io
+
   end
 end

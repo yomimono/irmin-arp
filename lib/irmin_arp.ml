@@ -112,6 +112,9 @@ module Arp = struct
 
     let (>>=) = Lwt.bind
 
+    let push t remote =
+      Sync.push (t.cache "push contents") (Irmin.remote_basic remote)
+
     let dither_wait time =
       (* adjust a minimum wait time by some small amount of ms *)
       let ep = Random.int 10 in
@@ -206,9 +209,6 @@ module Arp = struct
                   pending = Hashtbl.create 4 } in
         Lwt.async (tick t);
         Lwt.return (`Ok t)
-
-    let push t remote =
-      Sync.push (t.cache "push contents") remote
 
     (* construct an arp record representing a gratuitious arp announcement for
        ip *)

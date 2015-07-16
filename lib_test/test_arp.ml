@@ -35,7 +35,7 @@ module Test (I : Irmin.S_MAKER) = struct
 
   let local_copy stack =
     Irmin.create store stack.config Irmin_unix.task >>= fun cache ->
-    A.push stack.arp (Irmin.remote_basic (cache "make remote")) >>= function
+    A.push stack.arp (cache "make remote") >>= function
     | `Error -> gripe "ARP didn't push cache to us"
     | `Ok -> Lwt.return cache
 
