@@ -15,11 +15,21 @@ module Arp : sig
                                       | `Unusable
                                       | `Bad_mac of string list ]
   end
-  module Make (Ethif : V1_LWT.ETHIF) (Clock: V1.CLOCK) (Time: V1_LWT.TIME) 
-      (Maker : Irmin.S_MAKER) :
+  module Make (Ethif : V1_LWT.ETHIF) (Clock: V1.CLOCK) (Time: V1_LWT.TIME)
+      (Random: V1.RANDOM) (Maker : Irmin.S_MAKER) :
   sig
-    include V1_LWT.ARP
+    include V1_LWT.ARP with type error =
+    [
+      (* classes of error: underlying fs, underlying network, semantics of caches?
+       * this needs some work, but here's a first go at it *)
+      | `Fs | `Network | `Semantics | `Unknown of string
+    ]
     val push : t -> Irmin.remote -> [ `Error | `Ok ] io
-    val connect : Ethif.t -> Irmin.config -> string list -> [> `Ok of t | `Error of error ] io
+    val connect : 
+      Ethif.t ->
+      Irmin.config ->
+      pull:([ `BC ], 'k, 'v) Irmin.t list ->
+      node:string list ->
+      [> `Ok of t | `Error of error ] io
   end
 end
