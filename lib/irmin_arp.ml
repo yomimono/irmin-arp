@@ -93,6 +93,7 @@ module Arp = struct
     type ipaddr = Ipaddr.V4.t
     type macaddr = Macaddr.t
     type buffer = Cstruct.t
+    type repr = string
     type 'a io = 'a Lwt.t
     type error = [ `Fs | `Network | `Semantics | `Unknown of string ]
 
@@ -120,10 +121,11 @@ module Arp = struct
       let ep = Random.int 10 in
       time +. ((float_of_int ep) *. 0.001)
 
-    let pp fmt t =
-      I.read_exn (t.cache "read map for prettyprint") t.node >>= fun map ->
-      Format.fprintf fmt "%s" (Ezjsonm.to_string (Ezjsonm.wrap (T.to_json map)));
-      Lwt.return_unit
+    let pp fmt (repr : string) = Format.fprintf fmt "%s" repr
+
+    let to_repr t =
+      I.read_exn (t.cache "read cache for prettyprint") t.node >>= fun map ->
+      Lwt.return (Ezjsonm.to_string (Ezjsonm.wrap (T.to_json map)))
 
     let disconnect t = Lwt.return_unit (* TODO: kill tick somehow *)
 
