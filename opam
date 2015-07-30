@@ -12,4 +12,14 @@ build: [
 ]
 install: [make "install"]
 remove: ["ocamlfind" "remove" "irmin-arp"]
-depends: "ocamlfind" {build}
+depends: [
+   "ocamlfind" {build}
+   "alcotest" {test}
+   "oUnit" {test}
+   "mirage-vnetif" {test}
+   "irmin.git" {test}
+   "irmin-unix" {test}
+   "irmin" {>= "0.9.8"}
+   "mirage-types" {>= "2.6.0"}
+   "tcpip.arpv4" {>= "2.6.0"}
+   ]
