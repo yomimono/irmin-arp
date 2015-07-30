@@ -7,6 +7,9 @@ module Arp = struct
     tpa: Ipaddr.V4.t;
   }
   module Parse = struct
+
+    let arp_ethertype = 0x0806
+
     let garp src_mac src_ip =
       { op = `Reply;
         sha = src_mac;
@@ -14,6 +17,13 @@ module Arp = struct
         spa = src_ip;
         tpa = Ipaddr.V4.any;
       }
+
+    let ethernet_of_arp arp =
+      let eth_header = Cstruct.create (Wire_structs.sizeof_ethernet) in
+      Wire_structs.set_ethernet_dst (Macaddr.to_bytes arp.tha) 0 eth_header;
+      Wire_structs.set_ethernet_src (Macaddr.to_bytes arp.sha) 0 eth_header;
+      Wire_structs.set_ethernet_ethertype eth_header arp_ethertype;
+      eth_header
 
     let cstruct_of_arp arp =
       let open Arpv4_wire in
@@ -33,9 +43,6 @@ module Arp = struct
         |`Reply -> 2
         |`Unknown n -> n
       in
-      set_arp_dst dmac 0 buf;
-      set_arp_src smac 0 buf;
-      set_arp_ethertype buf 0x0806; (* ARP *)
       set_arp_htype buf 1;
       set_arp_ptype buf 0x0800; (* IPv4 *)
       set_arp_hlen buf 6; (* ethernet mac size *)
@@ -76,6 +83,7 @@ module Arp = struct
                 }
         end
       end
+
     let is_garp_for ip buf = match arp_of_cstruct buf with
       | `Ok arp -> arp.op = `Reply && arp.tha = Macaddr.broadcast
       | _ -> false
@@ -217,7 +225,8 @@ module Arp = struct
     let garp t ip = Parse.garp (Ethif.mac t.ethif) ip
 
     let output t arp =
-      Ethif.write t.ethif (Parse.cstruct_of_arp arp)
+      let ethernet_header = (Parse.ethernet_of_arp arp) in
+      Ethif.writev t.ethif [ ethernet_header; (Parse.cstruct_of_arp arp)]
 
     let set_ips t ips =
       (* it would be nice if there were some provision for "uh you really don't

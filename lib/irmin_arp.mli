@@ -10,6 +10,7 @@ module Arp : sig
     val garp : Macaddr.t -> Ipaddr.V4.t -> arp
     val is_garp_for : Ipaddr.V4.t -> Cstruct.t -> bool
     val cstruct_of_arp : arp -> Cstruct.t
+    val ethernet_of_arp : arp -> Cstruct.t (* ethernet header w/correct macs *)
     val arp_of_cstruct : Cstruct.t -> [ `Ok of arp
                                       | `Too_short
                                       | `Unusable
