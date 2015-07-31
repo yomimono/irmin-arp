@@ -1,5 +1,5 @@
 # OASIS_START
-# DO NOT EDIT (digest: 935b18120a301eccbef2cf5b53235e1a)
+# DO NOT EDIT (digest: 873ec7915347c9a82f34009cc86a3535)
 # Ignore VCS directories, you can use the same kind of rule outside
 # OASIS_START/STOP if you want to exclude directories that contains
 # useless stuff for the build process
@@ -72,6 +72,7 @@ true: annot, bin_annot
 <lib_test/test_arp.{native,byte}>: pkg_ezjsonm
 <lib_test/test_arp.{native,byte}>: pkg_ipaddr
 <lib_test/test_arp.{native,byte}>: pkg_irmin
+<lib_test/test_arp.{native,byte}>: pkg_irmin.git
 <lib_test/test_arp.{native,byte}>: pkg_irmin.unix
 <lib_test/test_arp.{native,byte}>: pkg_lwt
 <lib_test/test_arp.{native,byte}>: pkg_mirage-clock-unix
@@ -89,6 +90,7 @@ true: annot, bin_annot
 <lib_test/*.ml{,i,y}>: pkg_ezjsonm
 <lib_test/*.ml{,i,y}>: pkg_ipaddr
 <lib_test/*.ml{,i,y}>: pkg_irmin
+<lib_test/*.ml{,i,y}>: pkg_irmin.git
 <lib_test/*.ml{,i,y}>: pkg_irmin.unix
 <lib_test/*.ml{,i,y}>: pkg_lwt
 <lib_test/*.ml{,i,y}>: pkg_mirage-clock-unix

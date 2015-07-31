@@ -17,6 +17,8 @@ module Test (I : Irmin.S_MAKER) = struct
 
   let store = Irmin.basic (module I) (module T)
 
+  let extract_arp etherbuf = Cstruct.shift etherbuf (6+6+2)
+
   let get_arp ?(backend = blessed_backend) ~(make_fn : unit -> Irmin.config) ~node
       ?(pull=[])() =
     or_error "backend" V.connect backend >>= fun netif ->
@@ -35,7 +37,7 @@ module Test (I : Irmin.S_MAKER) = struct
 
   let local_copy stack =
     Irmin.create store stack.config Irmin_unix.task >>= fun cache ->
-    A.push stack.arp (Irmin.remote_basic (cache "make remote")) >>= function
+    A.push stack.arp (cache "make remote") >>= function
     | `Error -> gripe "ARP didn't push cache to us"
     | `Ok -> Lwt.return cache
 
@@ -112,7 +114,8 @@ module Test (I : Irmin.S_MAKER) = struct
       Lwt.return_unit
     in
     let listen_fn () =
-      (fun buf -> match Irmin_arp.Arp.Parse.is_garp_for first_ip buf with
+      (fun buf -> match Irmin_arp.Arp.Parse.is_garp_for first_ip (Cstruct.shift
+                                                                    buf 14) with
          | true -> V.disconnect listen_netif
          | false ->
            match Irmin_arp.Arp.Parse.arp_of_cstruct buf with
@@ -155,7 +158,7 @@ module Test (I : Irmin.S_MAKER) = struct
     timeout_or ~timeout:0.5 ~msg:"Nothing received by listen.netif when trying to
   do single GARP input test"
       listen.netif (fun () -> A.set_ips speak.arp [ first_ip ] )
-      (fun () -> fun buf -> A.input listen.arp buf >>= fun () -> V.disconnect
+      (fun () -> fun buf -> A.input listen.arp (Cstruct.shift buf 14) >>= fun () -> V.disconnect
           listen.netif)
     >>= fun () ->
     (* load our own representation of the ARP cache of the listener *)
@@ -176,15 +179,18 @@ module Test (I : Irmin.S_MAKER) = struct
        them on for us (as we might assume it does from having experience with
        Udp.write, Tcp.write, and Ip.write -- this is gross and probably the next
        thing to tackle in tcpip... *)
-    let for_listener = Irmin_arp.Arp.Parse.cstruct_of_arp
+    let arp_reply = 
         { Irmin_arp.Arp.op = `Reply;
           sha = (V.mac speak.netif);
           tha = (V.mac listen.netif); spa = first_ip;
           tpa = second_ip } in
+    let arp_cst = Irmin_arp.Arp.Parse.cstruct_of_arp arp_reply in
+    let ethernet_cst = Irmin_arp.Arp.Parse.ethernet_of_arp arp_reply in
     timeout_or ~timeout:0.5 ~msg:"Nothing received by listen.netif when trying to
   do single unicast reply input test"
-      listen.netif (fun () -> E.write speak.ethif for_listener)
-      (fun () -> fun buf -> A.input listen.arp buf >>= fun () -> V.disconnect listen.netif)
+      listen.netif (fun () -> E.writev speak.ethif [ ethernet_cst; arp_cst ])
+      (fun () -> fun buf -> A.input listen.arp (Cstruct.shift buf 14) >>= fun () -> V.disconnect
+          listen.netif)
     >>= fun () ->
     (* listen.config should have the ARP cache history reflecting the updates send
        by speak.arp; a current read should show us first_ip *)
@@ -394,7 +400,7 @@ module Test (I : Irmin.S_MAKER) = struct
     in
     let listen_fn () =
       fun buf ->
-        match Irmin_arp.Arp.Parse.arp_of_cstruct buf with
+        match Irmin_arp.Arp.Parse.arp_of_cstruct (Cstruct.shift buf 14) with
         | `Too_short | `Unusable | `Bad_mac _ ->
           OUnit.assert_failure "Attempting to produce a probe instead
                                                  resulted in a strange packet"
@@ -450,12 +456,12 @@ module type IRMIN_ARP = sig
 end
 
 let () =
-  let buffer = MProf_unix.mmap_buffer ~size:1000000 "test_arp.ctf" in
+  (* let buffer = MProf_unix.mmap_buffer ~size:1000000 "test_arp.ctf" in
   let trace_config = MProf.Trace.Control.make buffer MProf_unix.timestamper in
-  MProf.Trace.Control.start trace_config;
-  Log.set_log_level Log.DEBUG;
+  MProf.Trace.Control.start trace_config; *)
+  (* Log.set_log_level Log.DEBUG;
   Log.color_on ();
-  Log.set_output stdout;
+  Log.set_output stdout; *)
 
   let tests make_fn speed tests =
     List.map

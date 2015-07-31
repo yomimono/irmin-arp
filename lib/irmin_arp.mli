@@ -10,6 +10,7 @@ module Arp : sig
     val garp : Macaddr.t -> Ipaddr.V4.t -> arp
     val is_garp_for : Ipaddr.V4.t -> Cstruct.t -> bool
     val cstruct_of_arp : arp -> Cstruct.t
+    val ethernet_of_arp : arp -> Cstruct.t (* ethernet header w/correct macs *)
     val arp_of_cstruct : Cstruct.t -> [ `Ok of arp
                                       | `Too_short
                                       | `Unusable
@@ -24,12 +25,13 @@ module Arp : sig
        * this needs some work, but here's a first go at it *)
       | `Fs | `Network | `Semantics | `Unknown of string
     ]
-    val push : t -> Irmin.remote -> [ `Error | `Ok ] io
+    val push : t -> ([ `BC ], 'k, 'v) Irmin.t -> [ `Error | `Ok ] io
     val connect : 
       Ethif.t ->
       Irmin.config ->
       pull:([ `BC ], 'k, 'v) Irmin.t list ->
       node:string list ->
       [> `Ok of t | `Error of error ] io
+
   end
 end

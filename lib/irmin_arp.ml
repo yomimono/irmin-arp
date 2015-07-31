@@ -7,6 +7,9 @@ module Arp = struct
     tpa: Ipaddr.V4.t;
   }
   module Parse = struct
+
+    let arp_ethertype = 0x0806
+
     let garp src_mac src_ip =
       { op = `Reply;
         sha = src_mac;
@@ -14,6 +17,13 @@ module Arp = struct
         spa = src_ip;
         tpa = Ipaddr.V4.any;
       }
+
+    let ethernet_of_arp arp =
+      let eth_header = Cstruct.create (Wire_structs.sizeof_ethernet) in
+      Wire_structs.set_ethernet_dst (Macaddr.to_bytes arp.tha) 0 eth_header;
+      Wire_structs.set_ethernet_src (Macaddr.to_bytes arp.sha) 0 eth_header;
+      Wire_structs.set_ethernet_ethertype eth_header arp_ethertype;
+      eth_header
 
     let cstruct_of_arp arp =
       let open Arpv4_wire in
@@ -33,9 +43,6 @@ module Arp = struct
         |`Reply -> 2
         |`Unknown n -> n
       in
-      set_arp_dst dmac 0 buf;
-      set_arp_src smac 0 buf;
-      set_arp_ethertype buf 0x0806; (* ARP *)
       set_arp_htype buf 1;
       set_arp_ptype buf 0x0800; (* IPv4 *)
       set_arp_hlen buf 6; (* ethernet mac size *)
@@ -76,6 +83,7 @@ module Arp = struct
                 }
         end
       end
+
     let is_garp_for ip buf = match arp_of_cstruct buf with
       | `Ok arp -> arp.op = `Reply && arp.tha = Macaddr.broadcast
       | _ -> false
@@ -86,12 +94,14 @@ module Arp = struct
       (Random: V1.RANDOM) (Maker : Irmin.S_MAKER) = struct
     module T = Table.Make(Irmin.Path.String_list)
     module I = Irmin.Basic (Maker) (T)
-    type cache = (string -> ([ `BC ], T.Path.t, T.t) Irmin.t)
+    module Sync = Irmin.Sync(I)
+    type cache = (string -> I.t)
 
     type result = [ `Ok of Macaddr.t | `Timeout ]
     type ipaddr = Ipaddr.V4.t
     type macaddr = Macaddr.t
     type buffer = Cstruct.t
+    type repr = string
     type 'a io = 'a Lwt.t
     type error = [ `Fs | `Network | `Semantics | `Unknown of string ]
 
@@ -102,7 +112,6 @@ module Arp = struct
       node: T.Path.t;
       owner: string;
       config: Irmin.config;
-      store: (T.Path.t, T.t) Irmin.basic;
       pending: (ipaddr, result Lwt.u) Hashtbl.t;
       (* use a hashtable, since everything else in here is mutable :( *)
       cache: cache
@@ -112,15 +121,19 @@ module Arp = struct
 
     let (>>=) = Lwt.bind
 
+    let push t remote =
+      Sync.push (t.cache "push contents") (Irmin.remote_basic remote)
+
     let dither_wait time =
       (* adjust a minimum wait time by some small amount of ms *)
       let ep = Random.int 10 in
       time +. ((float_of_int ep) *. 0.001)
 
-    let pp fmt t =
-      Irmin.read_exn (t.cache "read map for prettyprint") t.node >>= fun map ->
-      Format.fprintf fmt "%s" (Ezjsonm.to_string (Ezjsonm.wrap (T.to_json map)));
-      Lwt.return_unit
+    let pp fmt (repr : string) = Format.fprintf fmt "%s" repr
+
+    let to_repr t =
+      I.read_exn (t.cache "read cache for prettyprint") t.node >>= fun map ->
+      Lwt.return (Ezjsonm.to_string (Ezjsonm.wrap (T.to_json map)))
 
     let disconnect t = Lwt.return_unit (* TODO: kill tick somehow *)
 
@@ -144,15 +157,15 @@ module Arp = struct
         (Macaddr.to_string arp.tha) (Ipaddr.V4.to_string arp.tpa)
 
     let rec tick t () =
-      Irmin.head_exn (t.cache "starting expiry") >>= fun head ->
-      Irmin.of_head t.store t.config (task t.owner) head >>= fun our_br ->
-      Irmin.read_exn (our_br "read for timeouts") t.node >>= fun table ->
+      I.head_exn (t.cache "starting expiry") >>= fun head ->
+      I.of_head t.config (task t.owner) head >>= fun our_br ->
+      I.read_exn (our_br "read for timeouts") t.node >>= fun table ->
       let now = Clock.time () in
       let updated = T.expire table now in
       (* TODO: this could stand to either not be committed if no changes happen,
          or to have a more informative commit message, or both *)
-      Irmin.update (our_br "Arp.tick: updating to age out old entries") t.node updated >>= fun () ->
-      Irmin.merge_exn "Arp.tick: merge expiry branch" our_br ~into:t.cache >>=
+      I.update (our_br "Arp.tick: updating to age out old entries") t.node updated >>= fun () ->
+      I.merge_exn "Arp.tick: merge expiry branch" our_br ~into:t.cache >>=
       fun () ->
       Time.sleep (dither_wait expiry_check_interval) >>= fun () -> tick t ()
 
@@ -170,17 +183,17 @@ module Arp = struct
         in
         try
           let x = Irmin.remote_basic x in
-          Irmin.pull (cache "Arp.create: Merge seed repository") x `Merge >>= process
+          Sync.pull (cache "Arp.create: Merge seed repository") x `Merge >>= process
         with
           (* TODO: a better serialization method in table.ml will require a change here *)
         | Ezjsonm.Parse_error _ -> Lwt.return (`Error `Semantics)
       in
       let empty_cache cache =
-        Irmin.update (cache "Arp.create: Initial empty cache") node T.empty
+        I.update (cache "Arp.create: Initial empty cache") node T.empty
         >>= fun () -> Lwt.return `Ok
       in
       let check_node node cache =
-        Irmin.read (cache "Arp.create: read for node entry") node >>= function
+        I.read (cache "Arp.create: read for node entry") node >>= function
         | Some x -> Lwt.return `Ok
         | None -> Lwt.return (`Error `Semantics)
       in
@@ -195,28 +208,25 @@ module Arp = struct
           in
           init cache l
       in
-      let store = Irmin.basic (module Maker) (module T) in
       let node = T.Path.create node in
       let owner = String.concat "/" node in
-      Random.self_init ();
-      Irmin.create store config (task owner) >>= fun cache ->
+      I.create config (task owner) >>= fun cache ->
       aux cache pull >>= function
       | `Error s -> Lwt.return (`Error s)
       | `Ok ->
-        let t = { ethif; bound_ips = []; node; owner; config; store; cache;
+        Random.self_init ();
+        let t = { ethif; bound_ips = []; node; owner; config; cache;
                   pending = Hashtbl.create 4 } in
         Lwt.async (tick t);
         Lwt.return (`Ok t)
-
-    let push t remote =
-      Irmin.push (t.cache "pushing state to remote store") remote
 
     (* construct an arp record representing a gratuitious arp announcement for
        ip *)
     let garp t ip = Parse.garp (Ethif.mac t.ethif) ip
 
     let output t arp =
-      Ethif.write t.ethif (Parse.cstruct_of_arp arp)
+      let ethernet_header = (Parse.ethernet_of_arp arp) in
+      Ethif.writev t.ethif [ ethernet_header; (Parse.cstruct_of_arp arp)]
 
     let set_ips t ips =
       (* it would be nice if there were some provision for "uh you really don't
@@ -241,12 +251,12 @@ module Arp = struct
 
     let notify t ip mac =
       let merge str new_table our_br head =
-        Irmin.update (our_br ("Arp.notify: " ^ str)) t.node new_table >>= fun () ->
-        Irmin.merge_exn "Arp.notify: merge notify branch" our_br ~into:t.cache
+        I.update (our_br ("Arp.notify: " ^ str)) t.node new_table >>= fun () ->
+        I.merge_exn "Arp.notify: merge notify branch" our_br ~into:t.cache
       in
-      Irmin.head_exn (t.cache "starting update") >>= fun head ->
-      Irmin.of_head t.store t.config (task t.owner) head >>= fun our_br ->
-      Irmin.read_exn (our_br "lookup") t.node >>= fun table ->
+      I.head_exn (t.cache "starting update") >>= fun head ->
+      I.of_head t.config (task t.owner) head >>= fun our_br ->
+      I.read_exn (our_br "lookup") t.node >>= fun table ->
       let now = Clock.time () in
       let expire = now +. arp_timeout in
       let updated = T.add ip (Entry.Confirmed (expire, mac)) table in
@@ -303,7 +313,7 @@ module Arp = struct
     let query t ip =
       let (>>=) = Lwt.bind in
       let open Entry in
-      Irmin.read_exn (t.cache "Arp.query") t.node
+      I.read_exn (t.cache "Arp.query") t.node
       >>= fun table ->
       try
         match T.find ip table with
