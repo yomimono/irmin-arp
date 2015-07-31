@@ -1,5 +1,5 @@
 PKG irmin
-PKG irmin-unix
+PKG irmin.unix
 PKG mirage-types
 PKG tcpip.arpv4
 PKG tc
