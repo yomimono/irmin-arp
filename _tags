@@ -1,5 +1,5 @@
 # OASIS_START
-# DO NOT EDIT (digest: 873ec7915347c9a82f34009cc86a3535)
+# DO NOT EDIT (digest: cd70acfae6e6ad8727318ba44dc8bcee)
 # Ignore VCS directories, you can use the same kind of rule outside
 # OASIS_START/STOP if you want to exclude directories that contains
 # useless stuff for the build process
@@ -19,6 +19,7 @@ true: annot, bin_annot
 <lib/*.ml{,i,y}>: pkg_ezjsonm
 <lib/*.ml{,i,y}>: pkg_ipaddr
 <lib/*.ml{,i,y}>: pkg_irmin
+<lib/*.ml{,i,y}>: pkg_irmin-network-datastores
 <lib/*.ml{,i,y}>: pkg_lwt
 <lib/*.ml{,i,y}>: pkg_mirage-types
 <lib/*.ml{,i,y}>: pkg_tcpip.arpv4
@@ -28,6 +29,7 @@ true: annot, bin_annot
 <lib_test/demo_network.{native,byte}>: pkg_ezjsonm
 <lib_test/demo_network.{native,byte}>: pkg_ipaddr
 <lib_test/demo_network.{native,byte}>: pkg_irmin
+<lib_test/demo_network.{native,byte}>: pkg_irmin-network-datastores
 <lib_test/demo_network.{native,byte}>: pkg_irmin.unix
 <lib_test/demo_network.{native,byte}>: pkg_lwt
 <lib_test/demo_network.{native,byte}>: pkg_mirage-clock-unix
@@ -43,35 +45,12 @@ true: annot, bin_annot
 <lib_test/demo_network.{native,byte}>: pkg_tcpip.tcp
 <lib_test/demo_network.{native,byte}>: use_irmin-arp
 <lib_test/*.ml{,i,y}>: pkg_tcpip.tcp
-# Executable test_ops
-<lib_test/test_ops.{native,byte}>: pkg_alcotest
-<lib_test/test_ops.{native,byte}>: pkg_ezjsonm
-<lib_test/test_ops.{native,byte}>: pkg_ipaddr
-<lib_test/test_ops.{native,byte}>: pkg_irmin
-<lib_test/test_ops.{native,byte}>: pkg_irmin.unix
-<lib_test/test_ops.{native,byte}>: pkg_lwt
-<lib_test/test_ops.{native,byte}>: pkg_mirage-types
-<lib_test/test_ops.{native,byte}>: pkg_oUnit
-<lib_test/test_ops.{native,byte}>: pkg_tcpip.arpv4
-<lib_test/test_ops.{native,byte}>: pkg_tcpip.ipv4
-<lib_test/test_ops.{native,byte}>: use_irmin-arp
-# Executable test_table
-<lib_test/test_table.{native,byte}>: pkg_alcotest
-<lib_test/test_table.{native,byte}>: pkg_ezjsonm
-<lib_test/test_table.{native,byte}>: pkg_ipaddr
-<lib_test/test_table.{native,byte}>: pkg_irmin
-<lib_test/test_table.{native,byte}>: pkg_irmin.unix
-<lib_test/test_table.{native,byte}>: pkg_lwt
-<lib_test/test_table.{native,byte}>: pkg_mirage-types
-<lib_test/test_table.{native,byte}>: pkg_oUnit
-<lib_test/test_table.{native,byte}>: pkg_tcpip.arpv4
-<lib_test/test_table.{native,byte}>: pkg_tcpip.ipv4
-<lib_test/test_table.{native,byte}>: use_irmin-arp
 # Executable test_arp
 <lib_test/test_arp.{native,byte}>: pkg_alcotest
 <lib_test/test_arp.{native,byte}>: pkg_ezjsonm
 <lib_test/test_arp.{native,byte}>: pkg_ipaddr
 <lib_test/test_arp.{native,byte}>: pkg_irmin
+<lib_test/test_arp.{native,byte}>: pkg_irmin-network-datastores
 <lib_test/test_arp.{native,byte}>: pkg_irmin.git
 <lib_test/test_arp.{native,byte}>: pkg_irmin.unix
 <lib_test/test_arp.{native,byte}>: pkg_lwt
@@ -90,6 +69,7 @@ true: annot, bin_annot
 <lib_test/*.ml{,i,y}>: pkg_ezjsonm
 <lib_test/*.ml{,i,y}>: pkg_ipaddr
 <lib_test/*.ml{,i,y}>: pkg_irmin
+<lib_test/*.ml{,i,y}>: pkg_irmin-network-datastores
 <lib_test/*.ml{,i,y}>: pkg_irmin.git
 <lib_test/*.ml{,i,y}>: pkg_irmin.unix
 <lib_test/*.ml{,i,y}>: pkg_lwt
