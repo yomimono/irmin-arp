@@ -89,10 +89,10 @@ module Arp = struct
       | _ -> false
   end
 
-  (* much cribbed from mirage-tcpip/lib/arpv4.ml *)
   module Make (Ethif : V1_LWT.ETHIF) (Clock: V1.CLOCK) (Time: V1_LWT.TIME)
       (Random: V1.RANDOM) (Maker : Irmin.S_MAKER) = struct
-    module T = Table.Make(Irmin.Path.String_list)
+    module Entry = Inds_entry.Make(Inds_wrappers.Macaddr_entry)
+    module T = Inds_table.Make (Ipaddr.V4) (Entry) (Irmin.Path.String_list)
     module I = Irmin.Basic (Maker) (T)
     module Sync = Irmin.Sync(I)
     type cache = (string -> I.t)

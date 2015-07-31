@@ -1,5 +1,5 @@
 # OASIS_START
-# DO NOT EDIT (digest: cd70acfae6e6ad8727318ba44dc8bcee)
+# DO NOT EDIT (digest: eda30b1f76ab9d9c2d112f2b4a687c86)
 # Ignore VCS directories, you can use the same kind of rule outside
 # OASIS_START/STOP if you want to exclude directories that contains
 # useless stuff for the build process
@@ -45,6 +45,7 @@ true: annot, bin_annot
 <lib_test/demo_network.{native,byte}>: pkg_tcpip.tcp
 <lib_test/demo_network.{native,byte}>: use_irmin-arp
 <lib_test/*.ml{,i,y}>: pkg_tcpip.tcp
+<lib_test/demo_network.{native,byte}>: custom
 # Executable test_arp
 <lib_test/test_arp.{native,byte}>: pkg_alcotest
 <lib_test/test_arp.{native,byte}>: pkg_ezjsonm
@@ -84,4 +85,5 @@ true: annot, bin_annot
 <lib_test/*.ml{,i,y}>: pkg_tcpip.ethif
 <lib_test/*.ml{,i,y}>: pkg_tcpip.ipv4
 <lib_test/*.ml{,i,y}>: use_irmin-arp
+<lib_test/test_arp.{native,byte}>: custom
 # OASIS_STOP
