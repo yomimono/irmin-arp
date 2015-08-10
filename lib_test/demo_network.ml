@@ -3,7 +3,7 @@ open Lwt.Infix
 
 module A_fs = Irmin_arp.Arp.Make(E)(Clock)(OS.Time)(Random)(Irmin_backend_fs)
 module A_mem = Irmin_arp.Arp.Make(E)(Clock)(OS.Time)(Random)(Irmin_mem.Make)
-module A = A_mem
+module A = A_fs (* change to A_mem for in-memory store! *)
 module IPV4 = Ipv4.Make(E)(A)
 module TCP = Tcp.Flow.Make(IPV4)(OS.Time)(Clock)(Random)
 
