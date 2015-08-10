@@ -3,7 +3,8 @@ open Lwt
 module B = Basic_backend.Make
 module V = Vnetif.Make(B)
 module E = Ethif.Make(V)
-module T = Table.Make(Irmin.Path.String_list)
+module Entry = Inds_entry.Make(Inds_wrappers.Macaddr_entry)
+module T = Inds_table.Make (Ipaddr.V4) (Entry) (Irmin.Path.String_list)
 module Irmin_storer_fs = Irmin_git
 module Irmin_backend_fs = Irmin_unix.Irmin_git.FS
 module I_fs = Irmin.Basic(Irmin_backend_fs)(T)

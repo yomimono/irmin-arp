@@ -89,10 +89,10 @@ module Arp = struct
       | _ -> false
   end
 
-  (* much cribbed from mirage-tcpip/lib/arpv4.ml *)
   module Make (Ethif : V1_LWT.ETHIF) (Clock: V1.CLOCK) (Time: V1_LWT.TIME)
       (Random: V1.RANDOM) (Maker : Irmin.S_MAKER) = struct
-    module T = Table.Make(Irmin.Path.String_list)
+    module Entry = Inds_entry.Make(Inds_wrappers.Macaddr_entry)
+    module T = Inds_table.Make (Ipaddr.V4) (Entry) (Irmin.Path.String_list)
     module I = Irmin.Basic (Maker) (T)
     module Sync = Irmin.Sync(I)
     type cache = (string -> I.t)
@@ -137,7 +137,7 @@ module Arp = struct
 
     let disconnect t = Lwt.return_unit (* TODO: kill tick somehow *)
 
-    let arp_timeout = 60. (* age entries out of cache after this many seconds *)
+    let arp_timeout = 60 (* age entries out of cache after this many seconds *)
     let expiry_check_interval = 1. (* check for expired entries this often *)
     let probe_repeat_delay = 1.5 (* per rfc5227, 2s >= probe_repeat_delay >= 1s *)
     let probe_num = 3 (* how many probes to send before giving up *)
@@ -160,7 +160,7 @@ module Arp = struct
       I.head_exn (t.cache "starting expiry") >>= fun head ->
       I.of_head t.config (task t.owner) head >>= fun our_br ->
       I.read_exn (our_br "read for timeouts") t.node >>= fun table ->
-      let now = Clock.time () in
+      let now = int_of_float (Clock.time ()) in
       let updated = T.expire table now in
       (* TODO: this could stand to either not be committed if no changes happen,
          or to have a more informative commit message, or both *)
@@ -257,8 +257,8 @@ module Arp = struct
       I.head_exn (t.cache "starting update") >>= fun head ->
       I.of_head t.config (task t.owner) head >>= fun our_br ->
       I.read_exn (our_br "lookup") t.node >>= fun table ->
-      let now = Clock.time () in
-      let expire = now +. arp_timeout in
+      let now = int_of_float (Clock.time ()) in
+      let expire = now + arp_timeout in
       let updated = T.add ip (Entry.Confirmed (expire, mac)) table in
       match Hashtbl.mem t.pending ip with
       | true ->

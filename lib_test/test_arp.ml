@@ -363,7 +363,8 @@ module Test (I : Irmin.S_MAKER) = struct
       let map = T.add ip entry (T.empty) in
       seed_cache make_fn node map
     in
-    let entry = Entry.Confirmed ((Clock.time () +.  60.), sample_mac) in
+    let expiry = (int_of_float (Clock.time ())) + 60 in
+    let entry = Entry.Confirmed (expiry, sample_mac) in
     let seeded = make_seeded_cache ["speaker"] (second_ip, entry) in
     seeded >>= fun seeded_cache ->
     let poll_remote = seeded_cache "make remote" in
@@ -415,7 +416,7 @@ module Test (I : Irmin.S_MAKER) = struct
 
   let entries_aged_out make_fn () =
     let backend = blessed_backend in
-    let expiry = Clock.time () +. 1. in
+    let expiry = (int_of_float (Clock.time ())) + 1 in
     let seeded_map = T.add first_ip (Entry.Confirmed (expiry, sample_mac)) T.empty in
     seed_cache make_fn ["listener"] seeded_map >>= fun sour_milk ->
     let sour_cream = (sour_milk "make remote") in

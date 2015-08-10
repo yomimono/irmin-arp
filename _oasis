@@ -14,48 +14,26 @@ Flag demo
 Library "irmin-arp"
   Path:            lib/
   Findlibname:     irmin-arp
-  Modules:         Irmin_arp, Table, Entry, Key
-  BuildDepends:    irmin, lwt, ipaddr, tcpip.arpv4, tcpip.ipv4, ezjsonm, mirage-types
+  Modules:         Irmin_arp
+  BuildDepends:    irmin, lwt, ipaddr, tcpip.arpv4, tcpip.ipv4, ezjsonm, mirage-types, irmin-network-datastores
 
 Executable demo_network
   Build$:         flag(demo)
   Path:           lib_test
   MainIs:         demo_network.ml
   CompiledObject: best
+  Custom:         true
   Install:        false
-  BuildDepends:   irmin, irmin-arp, lwt, irmin.unix, ipaddr, tcpip.ethif, tcpip.ipv4, tcpip.tcp, alcotest, oUnit, mirage-vnetif, mirage-types, mirage-clock-unix, mirage-unix, mirage-profile, mirage-profile.unix
-
-Executable test_ops
-  Build$:         flag(tests)
-  Path:           lib_test
-  MainIs:         test_ops.ml
-  CompiledObject: best
-  Install:        false
-  BuildDepends:   irmin, irmin-arp, lwt, irmin.unix, ipaddr, alcotest, oUnit
-
-Executable test_table
-  Build$:         flag(tests)
-  Path:           lib_test
-  MainIs:         test_table.ml
-  CompiledObject: best
-  Install:        false
-  BuildDepends:   irmin, irmin-arp, lwt, irmin.unix, ipaddr, alcotest, oUnit
+  BuildDepends:   irmin, irmin-arp, lwt, irmin.unix, ipaddr, tcpip.ethif, tcpip.ipv4, tcpip.tcp, alcotest, oUnit, mirage-vnetif, mirage-types, mirage-clock-unix, mirage-unix, mirage-profile, mirage-profile.unix, irmin-network-datastores
 
 Executable test_arp
   Build$:         flag(tests)
   Path:           lib_test
   MainIs:         test_arp.ml
+  Custom:         true
   CompiledObject: best
   Install:        false
   BuildDepends:   irmin, irmin.git, irmin-arp, lwt, irmin.unix, ipaddr, tcpip.ethif, tcpip.ipv4, alcotest, oUnit, mirage-vnetif, mirage-types, mirage-clock-unix, mirage-unix, tcpip.arpv4, mirage-profile, mirage-profile.unix
-
-Test test_ops
-  Run$: flag(tests)
-  Command: $test_ops
-
-Test test_table
-  Run$: flag(tests)
-  Command: $test_table
 
 Test test_arp
   Run$: flag(tests)
