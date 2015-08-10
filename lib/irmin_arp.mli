@@ -32,6 +32,5 @@ module Arp : sig
       pull:([ `BC ], 'k, 'v) Irmin.t list ->
       node:string list ->
       [> `Ok of t | `Error of error ] io
-
   end
 end
