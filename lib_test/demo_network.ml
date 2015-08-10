@@ -14,12 +14,10 @@ let server_2_ip = Ipaddr.V4.of_string_exn "192.168.252.2"
 
 let echo_port = 443
 
-let pester_interval = 5.0
-let crosstalk_interval = 90.0
+let pester_interval = 1.0
+let crosstalk_interval = 5.0
 
 let root = "demo_results"
-
-(* clients are 3..60, inclusive *)
 
 let strip = Ipaddr.V4.to_string
 
@@ -103,7 +101,9 @@ let servers ~backend =
   let rec echo flow =
     let ignore_errors fn = function
       | `Ok q -> fn q
-      | `Error _ | `Eof -> Lwt.return_unit
+      | `Error _ | `Eof ->
+        Log.warn "DEMO: connection terminated!";
+        Lwt.return_unit
     in
     (* try echoing, but don't really mind if we fail *)
     TCP.read flow >>= ignore_errors (fun buf ->
@@ -133,12 +133,8 @@ let converse
   >>= function
   | `Error _ -> Lwt.fail (failwith "couldn't establish connection between client and server")
   | `Ok flow ->
-    (*
-    TCP.read flow >>= ignore_errors (fun buf ->
-        TCP.write flow buf >>= ignore_errors (fun () -> Lwt.return_unit)
-      ) *)
     let rec pester flow =
-      let important_content = Cstruct.of_string "hi I love you I missed you" in
+      let important_content = Cstruct.of_string "please acknowledge my existence" in
       TCP.write flow important_content >>= ignore_errors
         (
           Log.warn "%s -> %s: %s" (strip src) (strip dest) (Cstruct.to_string
@@ -170,11 +166,7 @@ let crosstalk ((_, _, _, left_ip, _),
   let dst = List.hd (IPV4.get_ip right_ip) in
   gossip dst
 
-
-let ok_go () = (*
-  let buffer = MProf_unix.mmap_buffer ~size:1000000 "demo_network_trace.ctf" in
-  let trace_config = MProf.Trace.Control.make buffer MProf_unix.timestamper in
-  MProf.Trace.Control.start trace_config; *)
+let ok_go () =
   Log.set_log_level Log.WARN;
   Log.color_on ();
   Log.set_output stdout;
@@ -184,14 +176,17 @@ let ok_go () = (*
   Log.warn "DEMO: servers started";
   (* last entry of servers is a listener for inclusion in Lwt.join *)
   (* some clients talk only to s1, some to only s2 *)
-  clients ~backend 40 49 >>= fun s1_clients ->
+  clients ~backend 40 41 >>= fun s1_clients ->
   Log.warn "DEMO: clients contacting s1 online";
-  clients ~backend 50 59 >>= fun s2_clients ->
+  OS.Time.sleep 0.01 >>= fun () ->
+  clients ~backend 50 51 >>= fun s2_clients ->
   Log.warn "DEMO: clients contacting s2 online";
+  OS.Time.sleep 0.01 >>= fun () ->
   (* "left" and "right" clients periodically send one another IP messages *)
-  clients ~backend 10 19 >>= fun left_clients ->
+  clients ~backend 10 11 >>= fun left_clients ->
   Log.warn "DEMO: crosstalk left-hand clients online";
-  clients ~backend 20 29 >>= fun right_clients ->
+  OS.Time.sleep 0.01 >>= fun () ->
+  clients ~backend 20 21 >>= fun right_clients ->
   Log.warn "DEMO: crosstalk right-hand clients online";
   Log.warn "Starting demo in %s with %d nodes" root (2
                                                      + (List.length s1_clients)
