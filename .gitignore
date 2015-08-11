@@ -4,8 +4,6 @@ test_results/
 arp_test_results/
 irmin_test/
 lib/.irmin_arp.ml.swp
-lib/irmin_arp.mldylib
-lib/irmin_arp.mllib
 lib_test/.test_arp.ml.swp
 lib_test/.test_table.ml.swp
 nohup.out
