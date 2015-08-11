@@ -3,9 +3,9 @@ name: "irmin-arp"
 version: "0.0.1"
 maintainer: "Mindy Preston <meetup@yomimono.org>"
 authors: "Mindy Preston <meetup@yomimono.org>"
-homepage: ""
-bug-reports: ""
-license: ""
+homepage: "https://github.com/yomimono/irmin-arp"
+bug-reports: "https://github.com/yomimono/irmin-arp/issues/new"
+license: "ISC"
 build: [
   ["./configure" "--prefix=%{prefix}%"]
   [make]
@@ -17,9 +17,9 @@ depends: [
    "alcotest" {test}
    "oUnit" {test}
    "mirage-vnetif" {test}
-   "irmin.git" {test}
+   "git" {test}
    "irmin-unix" {test}
    "irmin" {>= "0.9.8"}
    "mirage-types" {>= "2.6.0"}
-   "tcpip.arpv4" {>= "2.6.0"}
+   "tcpip" {>= "2.6.0"}
    ]
