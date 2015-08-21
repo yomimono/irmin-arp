@@ -121,6 +121,8 @@ module Arp = struct
 
     let (>>=) = Lwt.bind
 
+    let store_of_t t = t.cache "read for store_of_t"
+
     let push t remote =
       Sync.push (t.cache "push contents") (Irmin.remote_basic remote)
 

@@ -19,6 +19,7 @@ module Arp : sig
   module Make (Ethif : V1_LWT.ETHIF) (Clock: V1.CLOCK) (Time: V1_LWT.TIME)
       (Random: V1.RANDOM) (Maker : Irmin.S_MAKER) :
   sig
+    module I: Irmin.BASIC
     include V1_LWT.ARP with type error =
     [
       (* classes of error: underlying fs, underlying network, semantics of caches?
@@ -32,5 +33,6 @@ module Arp : sig
       pull:([ `BC ], 'k, 'v) Irmin.t list ->
       node:string list ->
       [> `Ok of t | `Error of error ] io
+    val store_of_t : t -> I.t
   end
 end
