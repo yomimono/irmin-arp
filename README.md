@@ -4,6 +4,12 @@ This library is intended as a test/prototype library and exploration of the poss
 
 ## To Build
 
+The following unreleased package is required:
+
+```
+opam pin add irmin-network-datastores https://github.com/yomimono/irmin-network-datastores.git
+```
+
 The following dependencies are needed from the default opam repository:
 
 ```
