@@ -3,6 +3,7 @@ PKG irmin.unix
 PKG mirage-types
 PKG tcpip.arpv4
 PKG tc
+PKG irmin-network-datastores
 S lib
 S lib_test
 B _build/lib
