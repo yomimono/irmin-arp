@@ -20,7 +20,7 @@ depends: [
    "git" {test}
    "irmin-unix" {test}
    "irmin-network-datastores"
-   "irmin" {>= "0.9.8"}
+   "irmin" {>= "0.9.8" & < "0.9.10"}
    "mirage-types" {>= "2.6.0"}
    "tcpip" {>= "2.6.0"}
    ]
